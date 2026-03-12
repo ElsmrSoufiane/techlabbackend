@@ -88,7 +88,8 @@ class EmailNotificationController extends Controller
 
             foreach ($customers as $customer) {
                 try {
-                    $html = $this->buildEmailHtml($request, $customer);
+                    // Replace placeholders in the raw HTML body
+                    $html = $this->replacePlaceholders($request->body, $customer);
                     
                     Mail::html($html, function ($message) use ($customer, $request) {
                         $message->to($customer->email)
@@ -156,7 +157,8 @@ class EmailNotificationController extends Controller
 
             foreach ($customers as $customer) {
                 try {
-                    $html = $this->buildEmailHtml($request, $customer);
+                    // Replace placeholders in the raw HTML body
+                    $html = $this->replacePlaceholders($request->body, $customer);
                     
                     Mail::html($html, function ($message) use ($customer, $request) {
                         $message->to($customer->email)
@@ -234,7 +236,8 @@ class EmailNotificationController extends Controller
 
             foreach ($customers as $customer) {
                 try {
-                    $html = $this->buildEmailHtml($request, $customer);
+                    // Replace placeholders in the raw HTML body
+                    $html = $this->replacePlaceholders($request->body, $customer);
                     
                     Mail::html($html, function ($message) use ($customer, $request) {
                         $message->to($customer->email)
@@ -294,7 +297,8 @@ class EmailNotificationController extends Controller
                 'email' => $request->test_email
             ];
 
-            $html = $this->buildEmailHtml($request, $dummyCustomer);
+            // Replace placeholders in the raw HTML body
+            $html = $this->replacePlaceholders($request->body, $dummyCustomer);
             
             Mail::html($html, function ($message) use ($request) {
                 $message->to($request->test_email)
@@ -312,6 +316,21 @@ class EmailNotificationController extends Controller
     }
 
     /**
+     * Replace placeholders in HTML content
+     */
+    private function replacePlaceholders($html, $customer)
+    {
+        $replacements = [
+            '{{customer_name}}' => $customer->name,
+            '{{customer_email}}' => $customer->email,
+            '{{date}}' => date('d/m/Y'),
+            '{{year}}' => date('Y'),
+        ];
+
+        return str_replace(array_keys($replacements), array_values($replacements), $html);
+    }
+
+    /**
      * Get email templates
      */
     public function getEmailTemplates()
@@ -321,96 +340,29 @@ class EmailNotificationController extends Controller
                 'id' => 'welcome',
                 'name' => 'Bienvenue',
                 'subject' => 'Bienvenue chez TECLAB !',
-                'body' => $this->getWelcomeTemplate()
+                'body' => $this->getFullWelcomeTemplate()
             ],
             [
                 'id' => 'offer',
                 'name' => 'Offre Spéciale',
                 'subject' => 'Offre spéciale pour vous !',
-                'body' => $this->getOfferTemplate()
+                'body' => $this->getFullOfferTemplate()
             ],
             [
                 'id' => 'newsletter',
                 'name' => 'Newsletter',
                 'subject' => 'Newsletter TECLAB',
-                'body' => $this->getNewsletterTemplate()
+                'body' => $this->getFullNewsletterTemplate()
             ],
             [
                 'id' => 'promotion',
                 'name' => 'Promotion',
                 'subject' => 'Profitez de nos promotions !',
-                'body' => $this->getPromotionTemplate()
+                'body' => $this->getFullPromotionTemplate()
             ]
         ];
 
         return $this->successResponse($templates);
-    }
-
-    /**
-     * Build email HTML
-     */
-    private function buildEmailHtml($request, $customer)
-    {
-        $type = $request->type ?? 'notification';
-        $body = $request->body;
-        
-        // Replace placeholders
-        $body = str_replace('{{customer_name}}', $customer->name, $body);
-        $body = str_replace('{{customer_email}}', $customer->email, $body);
-        $body = str_replace('{{date}}', date('d/m/Y'), $body);
-        $body = str_replace('{{year}}', date('Y'), $body);
-
-        $typeColor = '#6d9eeb'; // Default blue
-        $typeIcon = '📧';
-        
-        switch ($type) {
-            case 'offer':
-                $typeColor = '#e67e22'; // Orange
-                $typeIcon = '🎉';
-                break;
-            case 'newsletter':
-                $typeColor = '#27ae60'; // Green
-                $typeIcon = '📰';
-                break;
-        }
-
-        return "
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>{$request->subject}</title>
-            <style>
-                body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
-                .header { background: {$typeColor}; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
-                .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 5px 5px; }
-                .footer { margin-top: 30px; font-size: 12px; color: #666; text-align: center; border-top: 1px solid #ddd; padding-top: 20px; }
-                .button { display: inline-block; background: {$typeColor}; color: white; text-decoration: none; padding: 12px 30px; border-radius: 5px; margin: 20px 0; }
-                .badge { background: {$typeColor}; color: white; padding: 5px 10px; border-radius: 3px; font-size: 12px; display: inline-block; margin-bottom: 10px; }
-            </style>
-        </head>
-        <body>
-            <div class='header'>
-                <h1>{$typeIcon} TECLAB</h1>
-            </div>
-            <div class='content'>
-                <div class='badge'>{$typeIcon} " . ucfirst($type) . "</div>
-                <h2>Bonjour {$customer->name} !</h2>
-                <div>
-                    {$body}
-                </div>
-                <div style='text-align: center; margin-top: 30px;'>
-                    <a href='http://localhost:3000' class='button'>Visiter notre site</a>
-                </div>
-            </div>
-            <div class='footer'>
-                <p>© " . date('Y') . " TECLAB. Tous droits réservés.</p>
-                <p>Rue 7 N° 184/Q4, Fès, Maroc</p>
-                <p>
-                    <small>Si vous ne souhaitez plus recevoir nos emails, <a href='#'>cliquez ici</a>.</small>
-                </p>
-            </div>
-        </body>
-        </html>";
     }
 
     /**
@@ -430,32 +382,219 @@ class EmailNotificationController extends Controller
     }
 
     /**
-     * Template methods
+     * Full HTML templates (now returned directly)
      */
-    private function getWelcomeTemplate()
+    private function getFullWelcomeTemplate()
     {
-        return "<p>Nous sommes ravis de vous accueillir chez TECLAB !</p>
-                <p>Découvrez notre large gamme de produits de qualité.</p>
-                <p>En bonus de bienvenue, profitez de -10% sur votre première commande avec le code <strong>BIENVENUE10</strong>.</p>";
+        return '<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bienvenue chez TECLAB</title>
+    <style>
+        body { margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f4f4f4; }
+        .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 40px 20px; text-align: center; }
+        .header h1 { color: white; margin: 0; font-size: 32px; }
+        .content { padding: 40px 30px; }
+        .footer { background-color: #f8f9fa; padding: 30px 20px; text-align: center; color: #666; font-size: 14px; }
+        .button { display: inline-block; padding: 12px 30px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; text-decoration: none; border-radius: 25px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>TECLAB</h1>
+        </div>
+        <div class="content">
+            <h2>Bonjour {{customer_name}},</h2>
+            <p>Nous sommes ravis de vous accueillir chez TECLAB, votre partenaire de confiance pour l\'équipement de laboratoire au Maroc.</p>
+            
+            <h3>Votre offre de bienvenue :</h3>
+            <p>Profitez de <strong>-10%</strong> sur votre première commande avec le code : <strong style="background: #f0f0f0; padding: 5px 10px;">BIENVENUE10</strong></p>
+            
+            <div style="text-align: center; margin: 30px 0;">
+                <a href="#" class="button">Découvrir nos produits</a>
+            </div>
+            
+            <p>Notre équipe reste à votre disposition pour toute question.</p>
+            <p>À très bientôt !</p>
+        </div>
+        <div class="footer">
+            <p>TECLAB - Laboratoire Maroc</p>
+            <p>Rue 7 N° 184/Q4, Fès, Maroc</p>
+            <p>contact@teclab.ma | www.teclab.ma</p>
+            <p>© {{year}} TECLAB. Tous droits réservés.</p>
+            <p><small>Si vous ne souhaitez plus recevoir nos emails, <a href="#">cliquez ici</a>.</small></p>
+        </div>
+    </div>
+</body>
+</html>';
     }
 
-    private function getOfferTemplate()
+    private function getFullOfferTemplate()
     {
-        return "<p>Nous avons une offre spéciale pour vous !</p>
-                <p>Profitez de -20% sur tous nos produits jusqu'à la fin du mois.</p>
-                <p>Utilisez le code <strong>PROMO20</strong> lors de votre commande.</p>";
+        return '<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Offre spéciale TECLAB</title>
+    <style>
+        body { margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f4f4f4; }
+        .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; }
+        .header { background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); padding: 40px 20px; text-align: center; }
+        .header h1 { color: white; margin: 0; font-size: 32px; }
+        .header .badge { background: #ffd700; color: #333; padding: 5px 15px; border-radius: 20px; display: inline-block; margin-top: 10px; }
+        .content { padding: 40px 30px; }
+        .footer { background-color: #f8f9fa; padding: 30px 20px; text-align: center; color: #666; font-size: 14px; }
+        .offer-box { background: #fff3cd; border: 2px solid #ffd700; padding: 20px; border-radius: 10px; text-align: center; margin: 20px 0; }
+        .offer-code { font-size: 24px; font-weight: bold; color: #f5576c; letter-spacing: 2px; }
+        .button { display: inline-block; padding: 12px 30px; background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; text-decoration: none; border-radius: 25px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>OFFRE SPÉCIALE</h1>
+            <div class="badge">-20%</div>
+        </div>
+        <div class="content">
+            <h2>Bonjour {{customer_name}},</h2>
+            
+            <div class="offer-box">
+                <p style="font-size: 18px; margin-bottom: 10px;">Profitez de <strong>20% de réduction</strong></p>
+                <p>sur tous nos produits jusqu\'à la fin du mois !</p>
+                <p class="offer-code">PROMO20</p>
+                <p><small>*Offre valable sur tout le site</small></p>
+            </div>
+            
+            <div style="text-align: center; margin: 30px 0;">
+                <a href="#" class="button">Profiter de l\'offre</a>
+            </div>
+            
+            <p>Ne manquez pas cette occasion exceptionnelle !</p>
+            <p>L\'équipe TECLAB</p>
+        </div>
+        <div class="footer">
+            <p>TECLAB - Laboratoire Maroc</p>
+            <p>Rue 7 N° 184/Q4, Fès, Maroc</p>
+            <p>© {{year}} TECLAB. Tous droits réservés.</p>
+        </div>
+    </div>
+</body>
+</html>';
     }
 
-    private function getNewsletterTemplate()
+    private function getFullNewsletterTemplate()
     {
-        return "<p>Découvrez les dernières nouveautés et actualités de TECLAB.</p>
-                <p>Nouveaux produits, promotions exclusives et conseils d'experts.</p>";
+        return '<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Newsletter TECLAB</title>
+    <style>
+        body { margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f4f4f4; }
+        .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; }
+        .header { background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%); padding: 40px 20px; text-align: center; }
+        .header h1 { color: white; margin: 0; font-size: 32px; }
+        .content { padding: 40px 30px; }
+        .news-item { margin-bottom: 30px; padding-bottom: 20px; border-bottom: 1px solid #eee; }
+        .news-item h3 { color: #43e97b; margin-bottom: 10px; }
+        .footer { background-color: #f8f9fa; padding: 30px 20px; text-align: center; color: #666; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📰 Newsletter TECLAB</h1>
+        </div>
+        <div class="content">
+            <h2>Bonjour {{customer_name}},</h2>
+            <p>Découvrez les dernières actualités de TECLAB !</p>
+            
+            <div class="news-item">
+                <h3>🔬 Nouveaux microscopes numériques</h3>
+                <p>Découvrez notre nouvelle gamme de microscopes avec caméra intégrée et analyse d\'images.</p>
+            </div>
+            
+            <div class="news-item">
+                <h3>⚗️ Promotions sur les consommables</h3>
+                <p>-15% sur tous les consommables de laboratoire jusqu\'au 30 du mois.</p>
+            </div>
+            
+            <div class="news-item">
+                <h3>💡 Conseil d\'expert</h3>
+                <p>Comment choisir votre équipement de laboratoire ? Guide complet pour faire le bon choix.</p>
+            </div>
+            
+            <div style="text-align: center; margin-top: 30px;">
+                <a href="#" style="color: #43e97b;">Voir toutes les actualités →</a>
+            </div>
+        </div>
+        <div class="footer">
+            <p>TECLAB - Laboratoire Maroc</p>
+            <p>Rue 7 N° 184/Q4, Fès, Maroc</p>
+            <p>© {{year}} TECLAB. Tous droits réservés.</p>
+        </div>
+    </div>
+</body>
+</html>';
     }
 
-    private function getPromotionTemplate()
+    private function getFullPromotionTemplate()
     {
-        return "<p>Promotion flash ! ⚡</p>
-                <p>-30% sur une sélection de produits pour 48h seulement.</p>
-                <p>Ne manquez pas cette occasion unique !</p>";
+        return '<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Promotion Flash TECLAB</title>
+    <style>
+        body { margin: 0; padding: 0; font-family: Arial, sans-serif; background-color: #f4f4f4; }
+        .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; }
+        .header { background: linear-gradient(135deg, #ff0844 0%, #ffb199 100%); padding: 40px 20px; text-align: center; }
+        .header h1 { color: white; margin: 0; font-size: 32px; }
+        .flash-badge { background: #ffd700; color: #333; padding: 10px 20px; border-radius: 30px; display: inline-block; font-size: 24px; font-weight: bold; margin-top: 10px; animation: pulse 1.5s infinite; }
+        @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.1); } 100% { transform: scale(1); } }
+        .content { padding: 40px 30px; }
+        .countdown { background: #333; color: white; padding: 20px; text-align: center; border-radius: 10px; margin: 20px 0; }
+        .countdown .hours { font-size: 36px; font-weight: bold; color: #ff0844; }
+        .footer { background-color: #f8f9fa; padding: 30px 20px; text-align: center; color: #666; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>⚡ PROMOTION FLASH ⚡</h1>
+            <div class="flash-badge">-30%</div>
+        </div>
+        <div class="content">
+            <h2>Bonjour {{customer_name}},</h2>
+            
+            <div class="countdown">
+                <p>Offre valable uniquement aujourd\'hui !</p>
+                <div class="hours">48h</div>
+                <p>Il vous reste <strong>48 heures</strong> pour profiter de cette offre exceptionnelle !</p>
+            </div>
+            
+            <p style="font-size: 18px; text-align: center;"><strong>-30% sur une sélection de produits</strong></p>
+            
+            <div style="text-align: center; margin: 30px 0;">
+                <a href="#" style="display: inline-block; padding: 15px 40px; background: #ff0844; color: white; text-decoration: none; border-radius: 30px; font-weight: bold; font-size: 18px;">Je profite de l\'offre</a>
+            </div>
+            
+            <p style="text-align: center; color: #666;"><small>Ne manquez pas cette occasion unique !</small></p>
+        </div>
+        <div class="footer">
+            <p>TECLAB - Laboratoire Maroc</p>
+            <p>Rue 7 N° 184/Q4, Fès, Maroc</p>
+            <p>© {{year}} TECLAB. Tous droits réservés.</p>
+        </div>
+    </div>
+</body>
+</html>';
     }
-}
+} 

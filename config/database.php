@@ -53,7 +53,7 @@ return [
     'unix_socket' => env('DB_SOCKET', ''),
     'charset' => 'utf8mb4',
     'collation' => 'utf8mb4_unicode_ci',
-    'prefix' => 'project2_',  // Add this line - all tables will have this prefix
+    'prefix' => '',  // Add this line - all tables will have this prefix
     'prefix_indexes' => true,
     'strict' => true,
     'engine' => null,

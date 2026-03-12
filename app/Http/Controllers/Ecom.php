@@ -23,6 +23,22 @@ use App\Http\Controllers\TelegramBotController;
  
 class Ecom extends Controller
 {
+
+
+// In your Ecom.php controller, add this helper method
+
+private function getProductPriceForUser($product, $user = null)
+{
+    $price = $product->price;
+    
+    // Apply pro discount if user is pro
+    if ($user && $user->isPro() && $user->pro_discount > 0) {
+        $discount = ($price * $user->pro_discount) / 100;
+        $price = round($price - $discount, 2);
+    }
+    
+    return $price;
+} 
     // ==================== HELPER METHODS ====================
 
     private function configureGmail()
@@ -414,81 +430,109 @@ class Ecom extends Controller
 
     // ==================== PRODUCT METHODS ====================
 
-    public function getProducts(Request $request)
-    {
-        $query = Product::with('category');
+   public function getProducts(Request $request)
+{
+    $query = Product::with('category');
 
-        if ($request->has('search') && !empty($request->search)) {
-            $search = $request->search;
-            $query->where(function($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('description', 'like', "%{$search}%")
-                  ->orWhere('sku', 'like', "%{$search}%")
-                  ->orWhere('brand', 'like', "%{$search}%");
-            });
-        }
-
-        if ($request->has('category') && !empty($request->category)) {
-            $query->where('category_id', $request->category);
-        }
-
-        if ($request->has('brands') && !empty($request->brands)) {
-            $brands = explode(',', $request->brands);
-            $query->whereIn('brand', $brands);
-        }
-
-        if ($request->has('min_price')) {
-            $query->where('price', '>=', $request->min_price);
-        }
-        if ($request->has('max_price')) {
-            $query->where('price', '<=', $request->max_price);
-        }
-
-        if ($request->has('featured') && $request->featured) {
-            $query->where('featured', true);
-        }
-
-        switch ($request->sort_by) {
-            case 'price-asc': $query->orderBy('price', 'asc'); break;
-            case 'price-desc': $query->orderBy('price', 'desc'); break;
-            case 'name-asc': $query->orderBy('name', 'asc'); break;
-            case 'name-desc': $query->orderBy('name', 'desc'); break;
-            default: $query->orderBy('featured', 'desc')->orderBy('id', 'desc');
-        }
-
-        $perPage = $request->per_page ?? 12;
-        $products = $query->paginate($perPage);
-
-        return $this->successResponse($products);
+    if ($request->has('search') && !empty($request->search)) {
+        $search = $request->search;
+        $query->where(function($q) use ($search) {
+            $q->where('name', 'like', "%{$search}%")
+              ->orWhere('description', 'like', "%{$search}%")
+              ->orWhere('sku', 'like', "%{$search}%")
+              ->orWhere('brand', 'like', "%{$search}%");
+        });
     }
 
-    public function getProduct(Request $request, $slug)
-    {
-        $product = Product::with('category')
-            ->where('slug', $slug)
-            ->orWhere('id', $slug)
-            ->firstOrFail();
-
-        $related = Product::where('category_id', $product->category_id)
-            ->where('id', '!=', $product->id)
-            ->limit(4)
-            ->get();
-
-        $user = $this->authenticateFromToken($request);
-        $isFavorite = false;
-        if ($user) {
-            $isFavorite = $user->favorites()
-                ->where('product_id', $product->id)
-                ->exists();
-        }
-
-        return $this->successResponse([
-            'product' => $product,
-            'related' => $related,
-            'is_favorite' => $isFavorite
-        ]);
+    if ($request->has('category') && !empty($request->category)) {
+        $query->where('category_id', $request->category);
     }
 
+    if ($request->has('brands') && !empty($request->brands)) {
+        $brands = explode(',', $request->brands);
+        $query->whereIn('brand', $brands);
+    }
+
+    if ($request->has('min_price')) {
+        $query->where('price', '>=', $request->min_price);
+    }
+    if ($request->has('max_price')) {
+        $query->where('price', '<=', $request->max_price);
+    }
+
+    if ($request->has('featured') && $request->featured) {
+        $query->where('featured', true);
+    }
+
+    switch ($request->sort_by) {
+        case 'price-asc': $query->orderBy('price', 'asc'); break;
+        case 'price-desc': $query->orderBy('price', 'desc'); break;
+        case 'name-asc': $query->orderBy('name', 'asc'); break;
+        case 'name-desc': $query->orderBy('name', 'desc'); break;
+        default: $query->orderBy('featured', 'desc')->orderBy('id', 'desc');
+    }
+
+    $perPage = $request->per_page ?? 12;
+    $products = $query->paginate($perPage);
+    
+    // Get authenticated user for pro pricing
+    $user = $this->authenticateFromToken($request);
+    
+    // Transform products to show pro prices if user is pro
+    if ($user && $user->isPro()) {
+        $products->getCollection()->transform(function ($product) use ($user) {
+            $product->original_price = $product->price;
+            $product->price = $user->calculateProPrice($product->price);
+            $product->pro_discount_applied = $user->pro_discount;
+            return $product;
+        });
+    }
+
+    return $this->successResponse($products);
+}
+   public function getProduct(Request $request, $slug)
+{
+    $product = Product::with('category')
+        ->where('slug', $slug)
+        ->orWhere('id', $slug)
+        ->firstOrFail();
+
+    $user = $this->authenticateFromToken($request);
+    
+    // Store original price and apply pro discount
+    $product->original_price = $product->price;
+    if ($user && $user->isPro()) {
+        $product->price = $user->calculateProPrice($product->price);
+        $product->pro_discount_applied = $user->pro_discount;
+    }
+
+    $related = Product::where('category_id', $product->category_id)
+        ->where('id', '!=', $product->id)
+        ->limit(4)
+        ->get();
+
+    // Apply pro discount to related products
+    if ($user && $user->isPro()) {
+        $related->transform(function ($item) use ($user) {
+            $item->original_price = $item->price;
+            $item->price = $user->calculateProPrice($item->price);
+            return $item;
+        });
+    }
+
+    $isFavorite = false;
+    if ($user) {
+        $isFavorite = $user->favorites()
+            ->where('product_id', $product->id)
+            ->exists();
+    }
+
+    return $this->successResponse([
+        'product' => $product,
+        'related' => $related,
+        'is_favorite' => $isFavorite
+    ]);
+}
     public function getFeaturedProducts()
     {
         $products = Product::where('featured', true)
@@ -516,34 +560,100 @@ class Ecom extends Controller
     /**
      * Get current cart contents
      */
-    public function getCart(Request $request)
-    {
-        try {
-            // Manually authenticate user
-            $user = $this->authenticateFromToken($request);
-            $customerId = $user ? $user->id : null;
-            
-            Log::info('📋 [CART] Getting cart', [
-                'customer_id' => $customerId,
-                'is_authenticated' => $user ? 'yes' : 'no'
-            ]);
+   public function getCart(Request $request)
+{
+    try {
+        // Manually authenticate user
+        $user = $this->authenticateFromToken($request);
+        $customerId = $user ? $user->id : null;
+        
+        Log::info('📋 [CART] Getting cart', [
+            'customer_id' => $customerId,
+            'is_authenticated' => $user ? 'yes' : 'no'
+        ]);
 
-            // FOR AUTHENTICATED USERS - Find by customer_id ONLY
-            if ($customerId) {
-                $cart = Cart::where('customer_id', $customerId)->first();
-                
-                if (!$cart) {
-                    return response()->json([
-                        'success' => true,
-                        'data' => [
-                            'items' => [],
-                            'total' => 0,
-                            'count' => 0
-                        ]
-                    ]);
+        // FOR AUTHENTICATED USERS - Find by customer_id ONLY
+        if ($customerId) {
+            $cart = Cart::where('customer_id', $customerId)->first();
+            
+            if (!$cart) {
+                return response()->json([
+                    'success' => true,
+                    'data' => [
+                        'items' => [],
+                        'total' => 0,
+                        'count' => 0,
+                        'is_pro' => $user ? $user->isPro() : false,
+                        'pro_discount' => $user ? $user->pro_discount : 0
+                    ]
+                ]);
+            }
+            
+            // Get cart items
+            $items = DB::table('cart_items')
+                ->where('cart_id', $cart->id)
+                ->join('products', 'cart_items.product_id', '=', 'products.id')
+                ->select(
+                    'products.id',
+                    'cart_items.id as cart_item_id',
+                    'products.name',
+                    'products.price',
+                    'products.image',
+                    'products.slug',
+                    'cart_items.quantity',
+                    'products.stock'
+                )
+                ->get();
+            
+            $formattedItems = [];
+            $total = 0;
+            $count = 0;
+            
+            foreach ($items as $item) {
+                // Apply pro discount if user is pro
+                $itemPrice = $item->price;
+                if ($user && $user->isPro() && $user->pro_discount > 0) {
+                    $discount = ($item->price * $user->pro_discount) / 100;
+                    $itemPrice = round($item->price - $discount, 2);
                 }
                 
-                // Get cart items
+                $itemTotal = $itemPrice * $item->quantity;
+                $total += $itemTotal;
+                $count += $item->quantity;
+                
+                $formattedItems[] = [
+                    'id' => (int) $item->id,
+                    'cart_item_id' => (int) $item->cart_item_id,
+                    'name' => $item->name,
+                    'price' => (float) $itemPrice,
+                    'original_price' => (float) $item->price,
+                    'image' => $item->image,
+                    'slug' => $item->slug,
+                    'quantity' => (int) $item->quantity,
+                    'stock' => (int) $item->stock,
+                    'total' => (float) $itemTotal
+                ];
+            }
+            
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'items' => $formattedItems,
+                    'total' => (float) $total,
+                    'count' => (int) $count,
+                    'is_pro' => $user ? $user->isPro() : false,
+                    'pro_discount' => $user ? $user->pro_discount : 0
+                ]
+            ]);
+        }
+        
+        // FOR GUESTS - Find by session_id
+        $sessionId = $this->getSessionId($request);
+        
+        if ($sessionId) {
+            $cart = Cart::where('session_id', $sessionId)->first();
+            
+            if ($cart) {
                 $items = DB::table('cart_items')
                     ->where('cart_id', $cart->id)
                     ->join('products', 'cart_items.product_id', '=', 'products.id')
@@ -586,180 +696,130 @@ class Ecom extends Controller
                     'data' => [
                         'items' => $formattedItems,
                         'total' => (float) $total,
-                        'count' => (int) $count
+                        'count' => (int) $count,
+                        'is_pro' => false,
+                        'pro_discount' => 0
                     ]
                 ]);
             }
-            
-            // FOR GUESTS - Find by session_id
-            $sessionId = $this->getSessionId($request);
-            
-            if ($sessionId) {
-                $cart = Cart::where('session_id', $sessionId)->first();
-                
-                if ($cart) {
-                    $items = DB::table('cart_items')
-                        ->where('cart_id', $cart->id)
-                        ->join('products', 'cart_items.product_id', '=', 'products.id')
-                        ->select(
-                            'products.id',
-                            'cart_items.id as cart_item_id',
-                            'products.name',
-                            'products.price',
-                            'products.image',
-                            'products.slug',
-                            'cart_items.quantity',
-                            'products.stock'
-                        )
-                        ->get();
-                    
-                    $formattedItems = [];
-                    $total = 0;
-                    $count = 0;
-                    
-                    foreach ($items as $item) {
-                        $itemTotal = $item->price * $item->quantity;
-                        $total += $itemTotal;
-                        $count += $item->quantity;
-                        
-                        $formattedItems[] = [
-                            'id' => (int) $item->id,
-                            'cart_item_id' => (int) $item->cart_item_id,
-                            'name' => $item->name,
-                            'price' => (float) $item->price,
-                            'image' => $item->image,
-                            'slug' => $item->slug,
-                            'quantity' => (int) $item->quantity,
-                            'stock' => (int) $item->stock,
-                            'total' => (float) $itemTotal
-                        ];
-                    }
-                    
-                    return response()->json([
-                        'success' => true,
-                        'data' => [
-                            'items' => $formattedItems,
-                            'total' => (float) $total,
-                            'count' => (int) $count
-                        ]
-                    ]);
-                }
-            }
-            
-            // No cart found
-            return response()->json([
-                'success' => true,
-                'data' => [
-                    'items' => [],
-                    'total' => 0,
-                    'count' => 0
-                ]
-            ]);
-            
-        } catch (\Exception $e) {
-            Log::error('📋 [CART] Error: ' . $e->getMessage());
-            return response()->json([
-                'success' => false,
-                'error' => 'Erreur lors du chargement du panier'
-            ], 500);
         }
+        
+        // No cart found
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'items' => [],
+                'total' => 0,
+                'count' => 0,
+                'is_pro' => $user ? $user->isPro() : false,
+                'pro_discount' => $user ? $user->pro_discount : 0
+            ]
+        ]);
+        
+    } catch (\Exception $e) {
+        Log::error('Cart error: ' . $e->getMessage());
+        Log::error('Cart error trace: ' . $e->getTraceAsString());
+        return response()->json([
+            'success' => false,
+            'error' => 'Erreur lors du chargement du panier'
+        ], 500);
     }
-
+}
     /**
      * Add item to cart
      */
     public function addToCart(Request $request)
-    {
-        try {
-            Log::info('➕ [CART] Adding item', $request->all());
+{
+    try {
+        Log::info('➕ [CART] Adding item', $request->all());
 
-            $validator = validator($request->all(), [
-                'product_id' => 'required|exists:products,id',
-                'quantity' => 'required|integer|min:1'
-            ]);
+        $validator = validator($request->all(), [
+            'product_id' => 'required|exists:products,id',
+            'quantity' => 'required|integer|min:1'
+        ]);
 
-            if ($validator->fails()) {
-                return response()->json([
-                    'success' => false,
-                    'error' => $validator->errors()->first()
-                ], 422);
-            }
-
-            $product = Product::find($request->product_id);
-            
-            if (!$product) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Produit non trouvé'
-                ], 404);
-            }
-
-            if ($product->stock < $request->quantity) {
-                return response()->json([
-                    'success' => false,
-                    'error' => 'Stock insuffisant'
-                ], 400);
-            }
-
-            // Manually authenticate user
-            $user = $this->authenticateFromToken($request);
-            $customerId = $user ? $user->id : null;
-            $sessionId = $this->getSessionId($request);
-
-            Log::info('➕ [CART] Using:', [
-                'customer_id' => $customerId,
-                'session_id' => $sessionId
-            ]);
-
-            // Find or create cart based on authentication
-            $cart = null;
-            if ($customerId) {
-                // AUTHENTICATED: Use customer_id
-                $cart = Cart::firstOrCreate(
-                    ['customer_id' => $customerId],
-                    ['session_id' => null]
-                );
-                Log::info('➕ [CART] Using authenticated cart', ['cart_id' => $cart->id]);
-            } else {
-                // GUEST: Use session_id
-                $cart = Cart::firstOrCreate(
-                    ['session_id' => $sessionId],
-                    ['customer_id' => null]
-                );
-                Log::info('➕ [CART] Using guest cart', ['cart_id' => $cart->id]);
-            }
-
-            // Check if item exists
-            $existingItem = CartItem::where('cart_id', $cart->id)
-                ->where('product_id', $request->product_id)
-                ->first();
-
-            if ($existingItem) {
-                $existingItem->quantity += $request->quantity;
-                $existingItem->save();
-                Log::info('➕ [CART] Updated existing item', ['item_id' => $existingItem->id]);
-            } else {
-                CartItem::create([
-                    'cart_id' => $cart->id,
-                    'product_id' => $request->product_id,
-                    'quantity' => $request->quantity,
-                    'attributes' => '[]',
-                    'attributes_hash' => md5('[]')
-                ]);
-                Log::info('➕ [CART] Created new item');
-            }
-
-            return $this->getCart($request);
-
-        } catch (\Exception $e) {
-            Log::error('➕ [CART] Error: ' . $e->getMessage());
+        if ($validator->fails()) {
             return response()->json([
                 'success' => false,
-                'error' => 'Erreur lors de l\'ajout au panier'
-            ], 500);
+                'error' => $validator->errors()->first()
+            ], 422);
         }
-    }
 
+        $product = Product::find($request->product_id);
+        
+        if (!$product) {
+            return response()->json([
+                'success' => false,
+                'error' => 'Produit non trouvé'
+            ], 404);
+        }
+
+        if ($product->stock < $request->quantity) {
+            return response()->json([
+                'success' => false,
+                'error' => 'Stock insuffisant'
+            ], 400);
+        }
+
+        // Manually authenticate user
+        $user = $this->authenticateFromToken($request);
+        $customerId = $user ? $user->id : null;
+        $sessionId = $this->getSessionId($request);
+
+        Log::info('➕ [CART] Using:', [
+            'customer_id' => $customerId,
+            'session_id' => $sessionId
+        ]);
+
+        // Find or create cart based on authentication
+        $cart = null;
+        if ($customerId) {
+            // AUTHENTICATED: Use customer_id
+            $cart = Cart::firstOrCreate(
+                ['customer_id' => $customerId],
+                ['session_id' => null]
+            );
+            Log::info('➕ [CART] Using authenticated cart', ['cart_id' => $cart->id]);
+        } else {
+            // GUEST: Use session_id
+            $cart = Cart::firstOrCreate(
+                ['session_id' => $sessionId],
+                ['customer_id' => null]
+            );
+            Log::info('➕ [CART] Using guest cart', ['cart_id' => $cart->id]);
+        }
+
+        // Check if item exists
+        $existingItem = CartItem::where('cart_id', $cart->id)
+            ->where('product_id', $request->product_id)
+            ->first();
+
+        if ($existingItem) {
+            $existingItem->quantity += $request->quantity;
+            $existingItem->save();
+            Log::info('➕ [CART] Updated existing item', ['item_id' => $existingItem->id]);
+        } else {
+            CartItem::create([
+                'cart_id' => $cart->id,
+                'product_id' => $request->product_id,
+                'quantity' => $request->quantity,
+                'attributes' => '[]',
+                'attributes_hash' => md5('[]')
+            ]);
+            Log::info('➕ [CART] Created new item');
+        }
+
+        return $this->getCart($request);
+
+    } catch (\Exception $e) {
+        Log::error('➕ [CART] Error: ' . $e->getMessage());
+        Log::error('➕ [CART] Error trace: ' . $e->getTraceAsString());
+        return response()->json([
+            'success' => false,
+            'error' => 'Erreur lors de l\'ajout au panier'
+        ], 500);
+    }
+}
     /**
      * Update cart item quantity
      */
@@ -1044,6 +1104,9 @@ class Ecom extends Controller
    /**
  * Create a new order
  */
+/**
+ * Create a new order
+ */
 public function createOrder(Request $request)
 {
     $user = $this->authenticateFromToken($request);
@@ -1055,7 +1118,9 @@ public function createOrder(Request $request)
         'items' => 'required|array|min:1',
         'items.*.product_id' => 'required|exists:products,id',
         'items.*.quantity' => 'required|integer|min:1',
-        'shipping_address' => 'required|string',
+        'shipping_address' => 'required|string|max:500',
+        'phone' => 'required|string|max:20',
+        'notes' => 'nullable|string|max:1000',
         'payment_method' => 'required|in:carte,espèces',
         'coupon_code' => 'nullable|string|exists:coupons,code',
     ]);
@@ -1122,7 +1187,7 @@ public function createOrder(Request $request)
         $tax = $subtotalAfterDiscount * 0.20; // 20% TVA
         $total = $subtotalAfterDiscount + $shipping + $tax;
 
-        // Create order
+        // Create order with phone and notes
         $order = Order::create([
             'order_number' => 'ORD-' . strtoupper(Str::random(8)),
             'customer_id' => $user->id,
@@ -1133,6 +1198,8 @@ public function createOrder(Request $request)
             'total' => $total,
             'status' => 'en cours',
             'shipping_address' => $request->shipping_address,
+            'phone' => $request->phone,
+            'notes' => $request->notes,
             'payment_method' => $request->payment_method,
             'coupon_id' => $couponId,
         ]);
@@ -1141,6 +1208,20 @@ public function createOrder(Request $request)
         foreach ($orderItems as $item) {
             $item['order_id'] = $order->id;
             OrderItem::create($item);
+        }
+
+        // Update customer's phone and address if provided and different
+        $customerUpdated = false;
+        if ($request->phone && $user->phone !== $request->phone) {
+            $user->phone = $request->phone;
+            $customerUpdated = true;
+        }
+        if ($request->shipping_address && $user->address !== $request->shipping_address) {
+            $user->address = $request->shipping_address;
+            $customerUpdated = true;
+        }
+        if ($customerUpdated) {
+            $user->save();
         }
 
         // Clear user's cart
@@ -1160,8 +1241,13 @@ public function createOrder(Request $request)
             $message .= "📦 <b>Commande #{$order->order_number}</b>\n";
             $message .= "👤 <b>Client:</b> {$user->name}\n";
             $message .= "📧 <b>Email:</b> {$user->email}\n";
-            $message .= "📞 <b>Téléphone:</b> " . ($user->phone ?? 'Non renseigné') . "\n";
+            $message .= "📞 <b>Téléphone:</b> {$request->phone}\n";
             $message .= "📍 <b>Adresse:</b> {$request->shipping_address}\n";
+            
+            if ($request->notes) {
+                $message .= "📝 <b>Notes:</b> {$request->notes}\n";
+            }
+            
             $message .= "💰 <b>Total:</b> {$total} MAD\n";
             $message .= "💳 <b>Paiement:</b> " . ($request->payment_method === 'carte' ? 'Carte' : 'Espèces (COD)') . "\n\n";
             $message .= "📋 <b>Articles:</b>\n";
@@ -1183,7 +1269,111 @@ public function createOrder(Request $request)
             Log::error('Failed to send Telegram notification: ' . $e->getMessage());
         }
 
-        // Return success response
+        // ========== SEND CONFIRMATION EMAIL TO CUSTOMER ==========
+        try {
+            $this->configureGmail();
+            
+            $emailHtml = "
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Confirmation de commande - TECLAB</title>
+                <style>
+                    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+                    .header { background: #6d9eeb; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+                    .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 5px 5px; }
+                    .order-details { background: white; padding: 20px; border-radius: 5px; margin: 20px 0; }
+                    table { width: 100%; border-collapse: collapse; }
+                    th { text-align: left; background: #f0f0f0; padding: 10px; }
+                    td { padding: 10px; border-bottom: 1px solid #eee; }
+                    .total-row { font-weight: bold; background: #f9f9f9; }
+                    .footer { margin-top: 30px; font-size: 12px; color: #666; text-align: center; }
+                </style>
+            </head>
+            <body>
+                <div class='header'>
+                    <h1>TECLAB</h1>
+                </div>
+                <div class='content'>
+                    <h2>Merci pour votre commande, {$user->name} !</h2>
+                    <p>Votre commande <strong>#{$order->order_number}</strong> a été confirmée.</p>
+                    
+                    <div class='order-details'>
+                        <h3>Récapitulatif de la commande</h3>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Produit</th>
+                                    <th>Quantité</th>
+                                    <th>Prix</th>
+                                    <th>Total</th>
+                                </tr>
+                            </thead>
+                            <tbody>";
+            
+            foreach ($orderItems as $item) {
+                $emailHtml .= "
+                                <tr>
+                                    <td>{$item['product_name']}</td>
+                                    <td>{$item['quantity']}</td>
+                                    <td>{$item['price']} MAD</td>
+                                    <td>" . ($item['price'] * $item['quantity']) . " MAD</td>
+                                </tr>";
+            }
+            
+            $emailHtml .= "
+                            </tbody>
+                        </table>
+                        
+                        <div style='margin-top: 20px;'>
+                            <p><strong>Sous-total:</strong> {$subtotal} MAD</p>";
+            
+            if ($discountAmount > 0) {
+                $emailHtml .= "<p><strong>Réduction:</strong> -{$discountAmount} MAD</p>";
+            }
+            
+            $emailHtml .= "
+                            <p><strong>Livraison:</strong> " . ($shipping > 0 ? $shipping . ' MAD' : 'Gratuite') . "</p>
+                            <p><strong>TVA (20%):</strong> {$tax} MAD</p>
+                            <p style='font-size: 18px; font-weight: bold;'><strong>Total:</strong> {$total} MAD</p>
+                        </div>
+                    </div>
+                    
+                    <div class='order-details'>
+                        <h3>Informations de livraison</h3>
+                        <p><strong>Adresse:</strong> {$request->shipping_address}</p>
+                        <p><strong>Téléphone:</strong> {$request->phone}</p>";
+            
+            if ($request->notes) {
+                $emailHtml .= "<p><strong>Notes:</strong> {$request->notes}</p>";
+            }
+            
+            $emailHtml .= "
+                        <p><strong>Mode de paiement:</strong> " . ($request->payment_method === 'carte' ? 'Carte bancaire' : 'Espèces à la livraison') . "</p>
+                    </div>
+                    
+                    <p>Vous serez livré dans un délai de 2-3 jours ouvrés.</p>
+                    <p>Pour suivre votre commande, connectez-vous à votre compte sur notre site.</p>
+                </div>
+                <div class='footer'>
+                    <p>© " . date('Y') . " TECLAB. Tous droits réservés.</p>
+                    <p>Rue 7 N° 184/Q4, Fès, Maroc | Tél: {$request->phone}</p>
+                </div>
+            </body>
+            </html>";
+            
+            Mail::html($emailHtml, function ($message) use ($user) {
+                $message->to($user->email)
+                        ->subject('Confirmation de votre commande - TECLAB');
+            });
+            
+            Log::info('Order confirmation email sent', ['to' => $user->email]);
+            
+        } catch (\Exception $e) {
+            Log::error('Failed to send order confirmation email: ' . $e->getMessage());
+        }
+
+        // Return success response with full order details
         return $this->successResponse([
             'message' => 'Commande créée avec succès',
             'order' => $order->load('items', 'coupon')
@@ -1196,21 +1386,6 @@ public function createOrder(Request $request)
         return $this->errorResponse('Erreur lors de la création de la commande: ' . $e->getMessage(), 500);
     }
 }
-    public function getOrder(Request $request, $id)
-    {
-        $user = $this->authenticateFromToken($request);
-        if (!$user) {
-            return $this->errorResponse('Authentification requise', 401);
-        }
-
-        $order = Order::with(['items', 'customer', 'coupon'])
-            ->where('id', $id)
-            ->where('customer_id', $user->id)
-            ->firstOrFail();
-
-        return $this->successResponse($order);
-    }
-
     public function cancelOrder(Request $request, $id)
     {
         $user = $this->authenticateFromToken($request);
