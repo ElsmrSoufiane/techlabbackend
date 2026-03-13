@@ -15,10 +15,7 @@ class CustomerSeeder extends Seeder
 
 
 
-        // Disable foreign key checks temporarily
-        DB::statement('SET FOREIGN_KEY_CHECKS=0');
-
-        // Method 1: Using firstOrCreate to avoid duplicates
+        
         
         // Create Admin Account (check by email)
         Customer::firstOrCreate(
