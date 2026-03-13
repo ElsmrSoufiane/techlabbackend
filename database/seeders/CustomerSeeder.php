@@ -204,7 +204,7 @@ class CustomerSeeder extends Seeder
         $this->command->info('✅ 3 Regular customer accounts checked/created');
 
         // Re-enable foreign key checks
-        DB::statement('SET FOREIGN_KEY_CHECKS=1');
+        
 
         // Display summary
         $totalCustomers = Customer::count();
