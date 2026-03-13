@@ -1,46 +1,40 @@
 <?php
 
 namespace Database\Seeders;
-use App\Models\Customer;
-use Illuminate\Support\Facades\Hash;
-// use Illuminate\Database\Console\Seeds\WithoutModelEvents;
-use Illuminate\Database\Seeder;
-use CustmerSeeder;
-use Illuminate\Support\Facades\DB;
-class DatabaseSeeder extends Seeder
-{
-    /**
-     * Seed the application's database.
-     */
-    public function run(): void
-    {
- <?php
-
-namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 
 class DatabaseSeeder extends Seeder
 {
-    /**
-     * Seed the application's database.
-     */
     public function run(): void
     {
-        // Disable foreign key constraints (PostgreSQL way)
+        // For PostgreSQL - disable triggers
         DB::statement('SET session_replication_role = replica;');
         
-        // Truncate tables in the correct order (children first, then parents)
-        DB::table('order_items')->truncate();
-        DB::table('cart_items')->truncate();
+        // Truncate tables
         DB::table('favorites')->truncate();
+        DB::table('cart_items')->truncate();
+        DB::table('order_items')->truncate();
         DB::table('products')->truncate();
+        DB::table('coupons')->truncate();
+        DB::table('customers')->truncate();
+        DB::table('partners')->truncate();
+        DB::table('categories')->truncate();
         
-        // Re-enable foreign key constraints
+        // Re-enable triggers
         DB::statement('SET session_replication_role = DEFAULT;');
+        
+        // Reset sequences
+        $tables = ['categories', 'products', 'partners', 'customers', 'coupons', 'order_items', 'cart_items', 'favorites'];
+        foreach ($tables as $table) {
+            try {
+                DB::statement("ALTER SEQUENCE {$table}_id_seq RESTART WITH 1;");
+            } catch (\Exception $e) {
+                // Ignore if sequence doesn't exist
+            }
+        }
 
-        // Call seeders
         $this->call([
             CategorySeeder::class,
             ProductSeeder::class,
@@ -48,21 +42,5 @@ class DatabaseSeeder extends Seeder
             CustomerSeeder::class,
             CouponSeeder::class,
         ]);
-    }
-}
-$this->call([
-            CategorySeeder::class,
-            ProductSeeder::class,
-            PartnerSeeder::class,
-            CustomerSeeder::class,
-            CouponSeeder::class,
-        ]);
-
-
-
-        // \App\Models\User::factory()->create([
-        //     'name' => 'Test User',
-        //     'email' => 'test@example.com',
-        // ]);
     }
 }
