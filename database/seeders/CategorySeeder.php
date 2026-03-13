@@ -11,10 +11,7 @@ class CategorySeeder extends Seeder
 {
     public function run(): void
     {
-        // Clear existing data first (optional)
-        DB::statement('SET FOREIGN_KEY_CHECKS=0');
-        DB::table('categories')->truncate();
-        DB::statement('SET FOREIGN_KEY_CHECKS=1');
+   
 
         $categories = [
             ['name' => 'Microscopes'],
