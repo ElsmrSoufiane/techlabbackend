@@ -133,7 +133,7 @@ class CouponSeeder extends Seeder
         */
 
         // Re-enable foreign key checks
-        DB::statement('SET FOREIGN_KEY_CHECKS=1');
+        
 
         // Display summary
         $totalCoupons = Coupon::where('customer_id', $admin->id)->count();
