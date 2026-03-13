@@ -432,10 +432,19 @@ private function getProductPriceForUser($product, $user = null)
 
    public function getProduct(Request $request, $slug)
 {
-    $product = Product::with(['category', 'images'])
-        ->where('slug', $slug)
-        ->orWhere('id', $slug)
-        ->firstOrFail();
+    // Check if the slug is actually a numeric ID
+    if (is_numeric($slug)) {
+        // If it's numeric, search by ID first, then by slug
+        $product = Product::with(['category', 'images'])
+            ->where('id', $slug)
+            ->orWhere('slug', $slug)
+            ->firstOrFail();
+    } else {
+        // If it's a string slug, only search by slug
+        $product = Product::with(['category', 'images'])
+            ->where('slug', $slug)
+            ->firstOrFail();
+    }
 
     $user = $this->authenticateFromToken($request);
     
@@ -477,7 +486,6 @@ private function getProductPriceForUser($product, $user = null)
         'is_favorite' => $isFavorite
     ]);
 }
-
 // Also update getProducts to include images
 public function getProducts(Request $request)
 {
