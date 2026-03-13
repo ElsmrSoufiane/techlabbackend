@@ -1,27 +1,40 @@
 <?php
 // app/Models/Order.php
+
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 class Order extends Model
 {
-   // In app/Models/Order.php
-protected $fillable = [
-    'order_number',
-    'customer_id',
-    'subtotal',
-    'discount_amount',
-    'shipping',
-    'tax',
-    'total',
-    'status',
-    'shipping_address',
-    'phone',
-    'notes',
-    'payment_method',
-    'coupon_id',
-];
+    use HasFactory;
+
+    protected $fillable = [
+        'order_number',
+        'customer_id',
+        'subtotal',
+        'discount_amount',
+        'shipping',
+        'tax',
+        'total',
+        'status',
+        'shipping_address',
+        'phone', // Make sure this exists
+        'notes', // Make sure this exists
+        'payment_method',
+        'coupon_id',
+    ];
+
+    protected $casts = [
+        'subtotal' => 'decimal:2',
+        'discount_amount' => 'decimal:2',
+        'shipping' => 'decimal:2',
+        'tax' => 'decimal:2',
+        'total' => 'decimal:2',
+        'created_at' => 'datetime',
+        'updated_at' => 'datetime',
+    ];
 
     public function customer()
     {
@@ -32,10 +45,9 @@ protected $fillable = [
     {
         return $this->hasMany(OrderItem::class);
     }
-    
-// app/Models/Order.php (add relationship)
-public function coupon()
-{
-    return $this->belongsTo(Coupon::class);
-}
+
+    public function coupon()
+    {
+        return $this->belongsTo(Coupon::class);
+    }
 }

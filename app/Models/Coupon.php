@@ -47,44 +47,59 @@ class Coupon extends Model
     }
 
     public function isValid($customerId = null, $orderAmount = null)
-    {
-        // Check if active
-        if (!$this->is_active) {
-            return false;
-        }
+{
+    \Log::info('🔍 Checking coupon validity', [
+        'code' => $this->code,
+        'customer_id' => $customerId,
+        'order_amount' => $orderAmount,
+        'is_active' => $this->is_active,
+        'starts_at' => $this->starts_at,
+        'expires_at' => $this->expires_at,
+        'now' => now(),
+        'max_uses' => $this->max_uses,
+        'used_count' => $this->used_count,
+        'coupon_customer_id' => $this->customer_id,
+        'min_order' => $this->min_order_amount
+    ]);
 
-        // Check dates
-        $now = now();
-        if ($this->starts_at && $now < $this->starts_at) {
-            return false;
-        }
-        if ($this->expires_at && $now > $this->expires_at) {
-            return false;
-        }
-
-        // Check max uses
-        if ($this->max_uses && $this->used_count >= $this->max_uses) {
-            return false;
-        }
-
-        // Check if assigned to specific customer
-        if ($this->customer_id && $this->customer_id != $customerId) {
-            return false;
-        }
-
-        // Check if customer has already used this coupon
-        if ($customerId && $this->customers()->where('customer_id', $customerId)->wherePivot('is_used', true)->exists()) {
-            return false;
-        }
-
-        // Check minimum order amount
-        if ($orderAmount && $this->min_order_amount && $orderAmount < $this->min_order_amount) {
-            return false;
-        }
-
-        return true;
+    // Check if active
+    if (!$this->is_active) {
+        \Log::info('❌ Failed: not active');
+        return false;
     }
 
+    // Check dates
+    $now = now();
+    if ($this->starts_at && $now < $this->starts_at) {
+        \Log::info('❌ Failed: not started yet', ['starts_at' => $this->starts_at]);
+        return false;
+    }
+    if ($this->expires_at && $now > $this->expires_at) {
+        \Log::info('❌ Failed: expired', ['expires_at' => $this->expires_at]);
+        return false;
+    }
+
+    // Check max uses
+    if ($this->max_uses && $this->used_count >= $this->max_uses) {
+        \Log::info('❌ Failed: max uses reached');
+        return false;
+    }
+
+    // Check if assigned to specific customer
+    if ($this->customer_id && $this->customer_id != $customerId) {
+        \Log::info('❌ Failed: wrong customer', ['expected' => $this->customer_id, 'got' => $customerId]);
+        return false;
+    }
+
+    // Check minimum order amount
+    if ($orderAmount && $this->min_order_amount && $orderAmount < $this->min_order_amount) {
+        \Log::info('❌ Failed: order too low', ['required' => $this->min_order_amount, 'got' => $orderAmount]);
+        return false;
+    }
+
+    \Log::info('✅ Coupon is valid');
+    return true;
+}
     public function calculateDiscount($amount)
     {
         if ($this->type === 'fixed') {

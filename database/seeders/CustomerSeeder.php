@@ -6,24 +6,36 @@ namespace Database\Seeders;
 use Illuminate\Database\Seeder;
 use App\Models\Customer;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\DB;
 
 class CustomerSeeder extends Seeder
 {
     public function run()
     {
-        // Create Admin Account
-        Customer::create([
-            'name' => 'Admin TECLAB',
-            'email' => 'admin@teclab.ma',
-            'password' => Hash::make('admin123'),
-            'phone' => '+212 600-000000',
-            'address' => 'Rue 7 N° 184/Q4, Fès, Maroc',
-            'role' => 'admin',
-            'tier' => 'regular',
-            'email_verified_at' => now(),
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+
+
+
+        // Disable foreign key checks temporarily
+        DB::statement('SET FOREIGN_KEY_CHECKS=0');
+
+        // Method 1: Using firstOrCreate to avoid duplicates
+        
+        // Create Admin Account (check by email)
+        Customer::firstOrCreate(
+            ['email' => 'admin@teclab.ma'],
+            [
+                'name' => 'Admin TECLAB',
+                'password' => Hash::make('admin123'),
+                'phone' => '+212 600-000000',
+                'address' => 'Rue 7 N° 184/Q4, Fès, Maroc',
+                'role' => 'admin',
+                'tier' => 'regular',
+                'email_verified_at' => now(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]
+        );
+        $this->command->info('✅ Admin account checked/created');
 
         // Create PRO Accounts with different discounts
         $proAccounts = [
@@ -35,7 +47,7 @@ class CustomerSeeder extends Seeder
                 'address' => 'Angle Avenue Hassan II et Rue Allah Ben Abdellah, Casablanca',
                 'company_name' => 'Laboratoire Central SARL',
                 'tier' => 'pro',
-                'pro_discount' => 15, // 15% discount for bulk orders
+                'pro_discount' => 15,
                 'role' => 'customer',
             ],
             [
@@ -46,7 +58,7 @@ class CustomerSeeder extends Seeder
                 'address' => 'Boulevard Zerktouni, N° 45, Casablanca',
                 'company_name' => 'Clinique Atlas SA',
                 'tier' => 'pro',
-                'pro_discount' => 20, // 20% discount for medical equipment
+                'pro_discount' => 20,
                 'role' => 'customer',
             ],
             [
@@ -57,7 +69,7 @@ class CustomerSeeder extends Seeder
                 'address' => 'Avenue Ibn Battouta, B.P. 1014, Rabat',
                 'company_name' => 'Université Mohammed V - Faculté des Sciences',
                 'tier' => 'pro',
-                'pro_discount' => 25, // 25% discount for educational institutions
+                'pro_discount' => 25,
                 'role' => 'customer',
             ],
             [
@@ -68,7 +80,7 @@ class CustomerSeeder extends Seeder
                 'address' => '65, Avenue Aspirant Lafuente, Casablanca',
                 'company_name' => 'Office National de l\'Electricité',
                 'tier' => 'pro',
-                'pro_discount' => 18, // 18% discount for government institutions
+                'pro_discount' => 18,
                 'role' => 'customer',
             ],
             [
@@ -79,7 +91,7 @@ class CustomerSeeder extends Seeder
                 'address' => '2-4, Rue Al Abtal, Hay Erraha, Casablanca',
                 'company_name' => 'OCP S.A.',
                 'tier' => 'pro',
-                'pro_discount' => 22, // 22% discount for industrial partners
+                'pro_discount' => 22,
                 'role' => 'customer',
             ],
             [
@@ -90,7 +102,7 @@ class CustomerSeeder extends Seeder
                 'address' => '1, Place Louis Pasteur, Casablanca',
                 'company_name' => 'Institut Pasteur du Maroc',
                 'tier' => 'pro',
-                'pro_discount' => 20, // 20% discount for research institutions
+                'pro_discount' => 20,
                 'role' => 'customer',
             ],
             [
@@ -101,7 +113,7 @@ class CustomerSeeder extends Seeder
                 'address' => 'Zone Industrielle, Aïn Sebaâ, Casablanca',
                 'company_name' => 'Les Eaux Minérales d\'Oulmès',
                 'tier' => 'pro',
-                'pro_discount' => 15, // 15% discount for quality control labs
+                'pro_discount' => 15,
                 'role' => 'customer',
             ],
             [
@@ -112,7 +124,7 @@ class CustomerSeeder extends Seeder
                 'address' => 'Avenue Hadj Ahmed Cherkaoui, Agdal, Rabat',
                 'company_name' => 'Office National de Sécurité Sanitaire',
                 'tier' => 'pro',
-                'pro_discount' => 18, // 18% discount for government labs
+                'pro_discount' => 18,
                 'role' => 'customer',
             ],
             [
@@ -123,7 +135,7 @@ class CustomerSeeder extends Seeder
                 'address' => 'Twin Center, Tour A, Angle Bd Zerktouni, Casablanca',
                 'company_name' => 'MANAGEM S.A.',
                 'tier' => 'pro',
-                'pro_discount' => 20, // 20% discount for mining industry
+                'pro_discount' => 20,
                 'role' => 'customer',
             ],
             [
@@ -134,20 +146,24 @@ class CustomerSeeder extends Seeder
                 'address' => 'Zone Industrielle, Bouskoura, Casablanca',
                 'company_name' => 'PHARMA 5',
                 'tier' => 'pro',
-                'pro_discount' => 15, // 15% discount for pharmaceutical industry
+                'pro_discount' => 15,
                 'role' => 'customer',
             ],
         ];
 
         foreach ($proAccounts as $account) {
-            Customer::create(array_merge($account, [
-                'email_verified_at' => now(),
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]));
+            Customer::firstOrCreate(
+                ['email' => $account['email']], // Check by email
+                array_merge($account, [
+                    'email_verified_at' => now(),
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ])
+            );
         }
+        $this->command->info('✅ 10 PRO accounts checked/created');
 
-        // Create some regular customer accounts for testing
+        // Create regular customer accounts
         $regularAccounts = [
             [
                 'name' => 'Ahmed Benani',
@@ -179,15 +195,40 @@ class CustomerSeeder extends Seeder
         ];
 
         foreach ($regularAccounts as $account) {
-            Customer::create(array_merge($account, [
-                'email_verified_at' => now(),
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]));
+            Customer::firstOrCreate(
+                ['email' => $account['email']], // Check by email
+                array_merge($account, [
+                    'email_verified_at' => now(),
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ])
+            );
         }
+        $this->command->info('✅ 3 Regular customer accounts checked/created');
 
-        $this->command->info('✅ Admin account created');
-        $this->command->info('✅ 10 PRO accounts created with varying discounts');
-        $this->command->info('✅ 3 Regular customer accounts created');
+        // Re-enable foreign key checks
+        DB::statement('SET FOREIGN_KEY_CHECKS=1');
+
+        // Display summary
+        $totalCustomers = Customer::count();
+        $adminCount = Customer::where('role', 'admin')->count();
+        $proCount = Customer::where('tier', 'pro')->count();
+        $regularCount = Customer::where('tier', 'regular')->where('role', 'customer')->count();
+
+        $this->command->info('=====================================');
+        $this->command->info("📊 CUSTOMER SUMMARY");
+        $this->command->info("=====================================");
+        $this->command->info("👑 Admin accounts: {$adminCount}");
+        $this->command->info("⭐ PRO accounts: {$proCount}");
+        $this->command->info("👤 Regular accounts: {$regularCount}");
+        $this->command->info("📈 Total customers: {$totalCustomers}");
+        $this->command->info("=====================================");
+        
+        // Show login credentials
+        $this->command->info("🔑 LOGIN CREDENTIALS:");
+        $this->command->info("   Admin: admin@teclab.ma / admin123");
+        $this->command->info("   PRO: any pro@ account / pro123");
+        $this->command->info("   Regular: any customer@ / customer123");
+        $this->command->info("=====================================");
     }
 }

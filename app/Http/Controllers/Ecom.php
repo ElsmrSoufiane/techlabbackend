@@ -430,74 +430,17 @@ private function getProductPriceForUser($product, $user = null)
 
     // ==================== PRODUCT METHODS ====================
 
-   public function getProducts(Request $request)
-{
-    $query = Product::with('category');
-
-    if ($request->has('search') && !empty($request->search)) {
-        $search = $request->search;
-        $query->where(function($q) use ($search) {
-            $q->where('name', 'like', "%{$search}%")
-              ->orWhere('description', 'like', "%{$search}%")
-              ->orWhere('sku', 'like', "%{$search}%")
-              ->orWhere('brand', 'like', "%{$search}%");
-        });
-    }
-
-    if ($request->has('category') && !empty($request->category)) {
-        $query->where('category_id', $request->category);
-    }
-
-    if ($request->has('brands') && !empty($request->brands)) {
-        $brands = explode(',', $request->brands);
-        $query->whereIn('brand', $brands);
-    }
-
-    if ($request->has('min_price')) {
-        $query->where('price', '>=', $request->min_price);
-    }
-    if ($request->has('max_price')) {
-        $query->where('price', '<=', $request->max_price);
-    }
-
-    if ($request->has('featured') && $request->featured) {
-        $query->where('featured', true);
-    }
-
-    switch ($request->sort_by) {
-        case 'price-asc': $query->orderBy('price', 'asc'); break;
-        case 'price-desc': $query->orderBy('price', 'desc'); break;
-        case 'name-asc': $query->orderBy('name', 'asc'); break;
-        case 'name-desc': $query->orderBy('name', 'desc'); break;
-        default: $query->orderBy('featured', 'desc')->orderBy('id', 'desc');
-    }
-
-    $perPage = $request->per_page ?? 12;
-    $products = $query->paginate($perPage);
-    
-    // Get authenticated user for pro pricing
-    $user = $this->authenticateFromToken($request);
-    
-    // Transform products to show pro prices if user is pro
-    if ($user && $user->isPro()) {
-        $products->getCollection()->transform(function ($product) use ($user) {
-            $product->original_price = $product->price;
-            $product->price = $user->calculateProPrice($product->price);
-            $product->pro_discount_applied = $user->pro_discount;
-            return $product;
-        });
-    }
-
-    return $this->successResponse($products);
-}
    public function getProduct(Request $request, $slug)
 {
-    $product = Product::with('category')
+    $product = Product::with(['category', 'images'])
         ->where('slug', $slug)
         ->orWhere('id', $slug)
         ->firstOrFail();
 
     $user = $this->authenticateFromToken($request);
+    
+    // Use the accessor to get all images
+    $product->images_array = $product->getAllImagesAttribute();
     
     // Store original price and apply pro discount
     $product->original_price = $product->price;
@@ -506,7 +449,8 @@ private function getProductPriceForUser($product, $user = null)
         $product->pro_discount_applied = $user->pro_discount;
     }
 
-    $related = Product::where('category_id', $product->category_id)
+    $related = Product::with('images')
+        ->where('category_id', $product->category_id)
         ->where('id', '!=', $product->id)
         ->limit(4)
         ->get();
@@ -532,6 +476,37 @@ private function getProductPriceForUser($product, $user = null)
         'related' => $related,
         'is_favorite' => $isFavorite
     ]);
+}
+
+// Also update getProducts to include images
+public function getProducts(Request $request)
+{
+    $query = Product::with(['category', 'images']);
+    
+    // ... your existing filters ...
+    
+    $perPage = $request->per_page ?? 12;
+    $products = $query->paginate($perPage);
+    
+    // Get authenticated user for pro pricing
+    $user = $this->authenticateFromToken($request);
+    
+    // Transform products
+    $products->getCollection()->transform(function ($product) use ($user) {
+        // Add images array
+        $product->images_array = $product->getAllImagesAttribute();
+        
+        // Apply pro discount if user is pro
+        if ($user && $user->isPro()) {
+            $product->original_price = $product->price;
+            $product->price = $user->calculateProPrice($product->price);
+            $product->pro_discount_applied = $user->pro_discount;
+        }
+        
+        return $product;
+    });
+
+    return $this->successResponse($products);
 }
     public function getFeaturedProducts()
     {
@@ -1114,6 +1089,12 @@ public function createOrder(Request $request)
         return $this->errorResponse('Authentification requise', 401);
     }
 
+    Log::info('📦 [ORDER] Creating order for user', [
+        'user_id' => $user->id,
+        'user_email' => $user->email,
+        'request_data' => $request->all()
+    ]);
+
     $validator = validator($request->all(), [
         'items' => 'required|array|min:1',
         'items.*.product_id' => 'required|exists:products,id',
@@ -1126,6 +1107,7 @@ public function createOrder(Request $request)
     ]);
 
     if ($validator->fails()) {
+        Log::error('📦 [ORDER] Validation failed', ['errors' => $validator->errors()]);
         return $this->errorResponse($validator->errors()->first(), 422);
     }
 
@@ -1143,14 +1125,21 @@ public function createOrder(Request $request)
                 return $this->errorResponse("Stock insuffisant pour {$product->name}", 400);
             }
 
-            $itemTotal = $product->price * $item['quantity'];
+            // Apply pro discount if user is pro
+            $priceToUse = $product->price;
+            if ($user->isPro() && $user->pro_discount > 0) {
+                $discount = ($product->price * $user->pro_discount) / 100;
+                $priceToUse = round($product->price - $discount, 2);
+            }
+
+            $itemTotal = $priceToUse * $item['quantity'];
             $subtotal += $itemTotal;
 
             $orderItems[] = [
                 'product_id' => $product->id,
                 'product_name' => $product->name,
                 'quantity' => $item['quantity'],
-                'price' => $product->price,
+                'price' => $priceToUse,
                 'attributes' => json_encode($item['attributes'] ?? []),
             ];
 
@@ -1170,12 +1159,12 @@ public function createOrder(Request $request)
                 $couponId = $coupon->id;
                 
                 // Mark coupon as used for this customer
-                if ($coupon->customers()->where('customer_id', $user->id)->exists()) {
-                    $coupon->customers()->updateExistingPivot($user->id, [
+                $coupon->customers()->syncWithoutDetaching([
+                    $user->id => [
                         'is_used' => true,
                         'used_at' => now()
-                    ]);
-                }
+                    ]
+                ]);
                 
                 $coupon->increment('used_count');
             }
@@ -1189,7 +1178,7 @@ public function createOrder(Request $request)
 
         // Create order with phone and notes
         $order = Order::create([
-            'order_number' => 'ORD-' . strtoupper(Str::random(8)),
+            'order_number' => 'ORD-' . strtoupper(uniqid()),
             'customer_id' => $user->id,
             'subtotal' => $subtotal,
             'discount_amount' => $discountAmount,
@@ -1203,6 +1192,8 @@ public function createOrder(Request $request)
             'payment_method' => $request->payment_method,
             'coupon_id' => $couponId,
         ]);
+
+        Log::info('📦 [ORDER] Order created', ['order_id' => $order->id, 'order_number' => $order->order_number]);
 
         // Create order items
         foreach ($orderItems as $item) {
@@ -1222,6 +1213,7 @@ public function createOrder(Request $request)
         }
         if ($customerUpdated) {
             $user->save();
+            Log::info('📦 [ORDER] Customer profile updated', ['user_id' => $user->id]);
         }
 
         // Clear user's cart
@@ -1229,151 +1221,25 @@ public function createOrder(Request $request)
         if ($cart) {
             $cart->items()->delete();
             $cart->delete();
+            Log::info('📦 [ORDER] Cart cleared', ['cart_id' => $cart->id]);
         }
 
         DB::commit();
 
-        // ========== SEND TELEGRAM NOTIFICATION ==========
+        // Send Telegram notification
         try {
-            $telegramBot = new \App\Http\Controllers\TelegramBotController();
-            
-            $message = "🛍️ <b>NOUVELLE COMMANDE</b>\n\n";
-            $message .= "📦 <b>Commande #{$order->order_number}</b>\n";
-            $message .= "👤 <b>Client:</b> {$user->name}\n";
-            $message .= "📧 <b>Email:</b> {$user->email}\n";
-            $message .= "📞 <b>Téléphone:</b> {$request->phone}\n";
-            $message .= "📍 <b>Adresse:</b> {$request->shipping_address}\n";
-            
-            if ($request->notes) {
-                $message .= "📝 <b>Notes:</b> {$request->notes}\n";
-            }
-            
-            $message .= "💰 <b>Total:</b> {$total} MAD\n";
-            $message .= "💳 <b>Paiement:</b> " . ($request->payment_method === 'carte' ? 'Carte' : 'Espèces (COD)') . "\n\n";
-            $message .= "📋 <b>Articles:</b>\n";
-            
-            foreach ($orderItems as $item) {
-                $message .= "• {$item['product_name']} x{$item['quantity']} - " . ($item['price'] * $item['quantity']) . " MAD\n";
-            }
-            
-            if ($discountAmount > 0) {
-                $message .= "\n💰 <b>Réduction:</b> -{$discountAmount} MAD";
-            }
-            
-            // Send to admin chat
-            $telegramBot->sendMessage('-5051267768', $message);
-            
-            Log::info('Telegram notification sent for order', ['order_id' => $order->id]);
-            
+            $this->sendOrderNotification($order, $user, $orderItems, $discountAmount);
         } catch (\Exception $e) {
-            Log::error('Failed to send Telegram notification: ' . $e->getMessage());
+            Log::error('📦 [ORDER] Failed to send Telegram notification: ' . $e->getMessage());
         }
 
-        // ========== SEND CONFIRMATION EMAIL TO CUSTOMER ==========
+        // Send email confirmation
         try {
-            $this->configureGmail();
-            
-            $emailHtml = "
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>Confirmation de commande - TECLAB</title>
-                <style>
-                    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
-                    .header { background: #6d9eeb; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
-                    .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 5px 5px; }
-                    .order-details { background: white; padding: 20px; border-radius: 5px; margin: 20px 0; }
-                    table { width: 100%; border-collapse: collapse; }
-                    th { text-align: left; background: #f0f0f0; padding: 10px; }
-                    td { padding: 10px; border-bottom: 1px solid #eee; }
-                    .total-row { font-weight: bold; background: #f9f9f9; }
-                    .footer { margin-top: 30px; font-size: 12px; color: #666; text-align: center; }
-                </style>
-            </head>
-            <body>
-                <div class='header'>
-                    <h1>TECLAB</h1>
-                </div>
-                <div class='content'>
-                    <h2>Merci pour votre commande, {$user->name} !</h2>
-                    <p>Votre commande <strong>#{$order->order_number}</strong> a été confirmée.</p>
-                    
-                    <div class='order-details'>
-                        <h3>Récapitulatif de la commande</h3>
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Produit</th>
-                                    <th>Quantité</th>
-                                    <th>Prix</th>
-                                    <th>Total</th>
-                                </tr>
-                            </thead>
-                            <tbody>";
-            
-            foreach ($orderItems as $item) {
-                $emailHtml .= "
-                                <tr>
-                                    <td>{$item['product_name']}</td>
-                                    <td>{$item['quantity']}</td>
-                                    <td>{$item['price']} MAD</td>
-                                    <td>" . ($item['price'] * $item['quantity']) . " MAD</td>
-                                </tr>";
-            }
-            
-            $emailHtml .= "
-                            </tbody>
-                        </table>
-                        
-                        <div style='margin-top: 20px;'>
-                            <p><strong>Sous-total:</strong> {$subtotal} MAD</p>";
-            
-            if ($discountAmount > 0) {
-                $emailHtml .= "<p><strong>Réduction:</strong> -{$discountAmount} MAD</p>";
-            }
-            
-            $emailHtml .= "
-                            <p><strong>Livraison:</strong> " . ($shipping > 0 ? $shipping . ' MAD' : 'Gratuite') . "</p>
-                            <p><strong>TVA (20%):</strong> {$tax} MAD</p>
-                            <p style='font-size: 18px; font-weight: bold;'><strong>Total:</strong> {$total} MAD</p>
-                        </div>
-                    </div>
-                    
-                    <div class='order-details'>
-                        <h3>Informations de livraison</h3>
-                        <p><strong>Adresse:</strong> {$request->shipping_address}</p>
-                        <p><strong>Téléphone:</strong> {$request->phone}</p>";
-            
-            if ($request->notes) {
-                $emailHtml .= "<p><strong>Notes:</strong> {$request->notes}</p>";
-            }
-            
-            $emailHtml .= "
-                        <p><strong>Mode de paiement:</strong> " . ($request->payment_method === 'carte' ? 'Carte bancaire' : 'Espèces à la livraison') . "</p>
-                    </div>
-                    
-                    <p>Vous serez livré dans un délai de 2-3 jours ouvrés.</p>
-                    <p>Pour suivre votre commande, connectez-vous à votre compte sur notre site.</p>
-                </div>
-                <div class='footer'>
-                    <p>© " . date('Y') . " TECLAB. Tous droits réservés.</p>
-                    <p>Rue 7 N° 184/Q4, Fès, Maroc | Tél: {$request->phone}</p>
-                </div>
-            </body>
-            </html>";
-            
-            Mail::html($emailHtml, function ($message) use ($user) {
-                $message->to($user->email)
-                        ->subject('Confirmation de votre commande - TECLAB');
-            });
-            
-            Log::info('Order confirmation email sent', ['to' => $user->email]);
-            
+            $this->sendOrderConfirmationEmail($order, $user, $orderItems, $discountAmount);
         } catch (\Exception $e) {
-            Log::error('Failed to send order confirmation email: ' . $e->getMessage());
+            Log::error('📦 [ORDER] Failed to send email confirmation: ' . $e->getMessage());
         }
 
-        // Return success response with full order details
         return $this->successResponse([
             'message' => 'Commande créée avec succès',
             'order' => $order->load('items', 'coupon')
@@ -1381,12 +1247,139 @@ public function createOrder(Request $request)
 
     } catch (\Exception $e) {
         DB::rollBack();
-        Log::error('Order creation error: ' . $e->getMessage());
-        Log::error('Order creation trace: ' . $e->getTraceAsString());
+        Log::error('📦 [ORDER] Order creation error: ' . $e->getMessage());
+        Log::error('📦 [ORDER] Order creation trace: ' . $e->getTraceAsString());
         return $this->errorResponse('Erreur lors de la création de la commande: ' . $e->getMessage(), 500);
     }
 }
-    public function cancelOrder(Request $request, $id)
+
+/**
+ * Send Telegram notification
+ */
+private function sendOrderNotification($order, $user, $orderItems, $discountAmount)
+{
+    $telegramBot = new \App\Http\Controllers\TelegramBotController();
+    
+    $message = "🛍️ <b>NOUVELLE COMMANDE</b>\n\n";
+    $message .= "📦 <b>Commande #{$order->order_number}</b>\n";
+    $message .= "👤 <b>Client:</b> {$user->name}\n";
+    $message .= "📧 <b>Email:</b> {$user->email}\n";
+    $message .= "📞 <b>Téléphone:</b> {$order->phone}\n";
+    $message .= "📍 <b>Adresse:</b> {$order->shipping_address}\n";
+    
+    if ($order->notes) {
+        $message .= "📝 <b>Notes:</b> {$order->notes}\n";
+    }
+    
+    $message .= "💰 <b>Total:</b> {$order->total} MAD\n";
+    $message .= "💳 <b>Paiement:</b> " . ($order->payment_method === 'carte' ? 'Carte' : 'Espèces (COD)') . "\n\n";
+    $message .= "📋 <b>Articles:</b>\n";
+    
+    foreach ($orderItems as $item) {
+        $message .= "• {$item['product_name']} x{$item['quantity']} - " . ($item['price'] * $item['quantity']) . " MAD\n";
+    }
+    
+    if ($discountAmount > 0) {
+        $message .= "\n💰 <b>Réduction:</b> -{$discountAmount} MAD";
+    }
+    
+    $telegramBot->sendMessage('-5051267768', $message);
+}
+
+/**
+ * Send order confirmation email
+ */
+private function sendOrderConfirmationEmail($order, $user, $orderItems, $discountAmount)
+{
+    $this->configureGmail();
+    
+    $itemsList = '';
+    foreach ($orderItems as $item) {
+        $itemsList .= "<tr>
+            <td>{$item['product_name']}</td>
+            <td>{$item['quantity']}</td>
+            <td>{$item['price']} MAD</td>
+            <td>" . ($item['price'] * $item['quantity']) . " MAD</td>
+        </tr>";
+    }
+    
+    $discountRow = $discountAmount > 0 ? "<tr><td colspan='3' style='text-align: right;'><strong>Réduction:</strong></td><td>-{$discountAmount} MAD</td></tr>" : '';
+    
+    $emailHtml = "
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Confirmation de commande - TECLAB</title>
+        <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background: #6d9eeb; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+            .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 5px 5px; }
+            .order-details { background: white; padding: 20px; border-radius: 5px; margin: 20px 0; }
+            table { width: 100%; border-collapse: collapse; }
+            th { text-align: left; background: #f0f0f0; padding: 10px; }
+            td { padding: 10px; border-bottom: 1px solid #eee; }
+            .total-row { font-weight: bold; background: #f9f9f9; }
+            .footer { margin-top: 30px; font-size: 12px; color: #666; text-align: center; }
+        </style>
+    </head>
+    <body>
+        <div class='header'>
+            <h1>TECLAB</h1>
+        </div>
+        <div class='content'>
+            <h2>Merci pour votre commande, {$user->name} !</h2>
+            <p>Votre commande <strong>#{$order->order_number}</strong> a été confirmée.</p>
+            
+            <div class='order-details'>
+                <h3>Récapitulatif de la commande</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Produit</th>
+                            <th>Quantité</th>
+                            <th>Prix unitaire</th>
+                            <th>Total</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {$itemsList}
+                    </tbody>
+                    <tfoot>
+                        <tr><td colspan='3' style='text-align: right;'><strong>Sous-total:</strong></td><td>{$order->subtotal} MAD</td></tr>
+                        {$discountRow}
+                        <tr><td colspan='3' style='text-align: right;'><strong>Livraison:</strong></td><td>" . ($order->shipping > 0 ? $order->shipping . ' MAD' : 'Gratuite') . "</td></tr>
+                        <tr><td colspan='3' style='text-align: right;'><strong>TVA (20%):</strong></td><td>{$order->tax} MAD</td></tr>
+                        <tr class='total-row'><td colspan='3' style='text-align: right;'><strong>Total:</strong></td><td><strong>{$order->total} MAD</strong></td></tr>
+                    </tfoot>
+                </table>
+            </div>
+            
+            <div class='order-details'>
+                <h3>Informations de livraison</h3>
+                <p><strong>Adresse:</strong> {$order->shipping_address}</p>
+                <p><strong>Téléphone:</strong> {$order->phone}</p>
+                " . ($order->notes ? "<p><strong>Notes:</strong> {$order->notes}</p>" : "") . "
+                <p><strong>Mode de paiement:</strong> " . ($order->payment_method === 'carte' ? 'Carte bancaire' : 'Espèces à la livraison') . "</p>
+            </div>
+            
+            <p>Vous serez livré dans un délai de 2-3 jours ouvrés.</p>
+            <p>Pour suivre votre commande, connectez-vous à votre compte sur notre site.</p>
+        </div>
+        <div class='footer'>
+            <p>© " . date('Y') . " TECLAB. Tous droits réservés.</p>
+            <p>Rue 7 N° 184/Q4, Fès, Maroc | Tél: {$order->phone}</p>
+        </div>
+    </body>
+    </html>";
+    
+    Mail::html($emailHtml, function ($message) use ($user) {
+        $message->to($user->email)
+                ->subject('Confirmation de votre commande - TECLAB');
+    });
+}
+
+
+public function cancelOrder(Request $request, $id)
     {
         $user = $this->authenticateFromToken($request);
         if (!$user) {
@@ -1423,62 +1416,92 @@ public function createOrder(Request $request)
     // ==================== COUPON METHODS ====================
 
     public function getCoupons(Request $request)
-    {
-        $user = $this->authenticateFromToken($request);
-        
-        $query = Coupon::where('is_active', true)
-            ->where(function($q) {
-                $q->whereNull('expires_at')
-                  ->orWhere('expires_at', '>', now());
-            });
-
-        if ($user) {
-            $query->where(function($q) use ($user) {
-                $q->where('is_public', true)
-                  ->orWhere('customer_id', $user->id);
-            });
-        } else {
-            $query->where('is_public', true);
-        }
-
-        $coupons = $query->get();
-        return $this->successResponse($coupons);
+{
+    $user = $this->authenticateFromToken($request);
+    
+    if (!$user) {
+        return $this->successResponse([]); // No coupons for guests
     }
+    
+    // Get coupons that belong to this specific user
+    $coupons = Coupon::where('customer_id', $user->id)
+        ->where('is_active', true)
+        ->where(function($q) {
+            $q->whereNull('expires_at')
+              ->orWhere('expires_at', '>', now());
+        })
+        ->orderBy('created_at', 'desc')
+        ->get();
 
+    return $this->successResponse($coupons);
+}
     public function validateCoupon(Request $request)
-    {
-        $validator = validator($request->all(), [
-            'code' => 'required|string',
-            'order_amount' => 'required|numeric|min:0',
-        ]);
+{
+    $validator = validator($request->all(), [
+        'code' => 'required|string',
+        'order_amount' => 'required|numeric|min:0',
+    ]);
 
-        if ($validator->fails()) {
-            return $this->errorResponse($validator->errors()->first(), 422);
-        }
-
-        $coupon = Coupon::where('code', $request->code)->first();
-
-        if (!$coupon) {
-            return $this->errorResponse('Code promo invalide', 404);
-        }
-
-        $user = $this->authenticateFromToken($request);
-        $customerId = $user ? $user->id : null;
-
-        if (!$coupon->isValid($customerId, $request->order_amount)) {
-            return $this->errorResponse('Ce code promo n\'est pas valide', 400);
-        }
-
-        $discount = $coupon->calculateDiscount($request->order_amount);
-
-        return $this->successResponse([
-            'coupon' => $coupon,
-            'discount' => $discount,
-            'new_total' => $request->order_amount - $discount
-        ]);
+    if ($validator->fails()) {
+        return $this->errorResponse($validator->errors()->first(), 422);
     }
 
-    // ==================== CONTACT METHOD ====================
+    $coupon = Coupon::where('code', $request->code)->first();
+
+    if (!$coupon) {
+        return $this->errorResponse('Code promo invalide', 404);
+    }
+
+    $user = $this->authenticateFromToken($request);
+    $customerId = $user ? $user->id : null;
+
+    // Check each condition and return specific error messages
+    if (!$coupon->is_active) {
+        return $this->errorResponse('Ce coupon n\'est pas actif', 400);
+    }
+
+    $now = now();
+    if ($coupon->starts_at && $now < $coupon->starts_at) {
+        $days = $now->diffInDays($coupon->starts_at);
+        return $this->errorResponse("Ce coupon sera valable dans $days jours (à partir du " . $coupon->starts_at->format('d/m/Y') . ")", 400);
+    }
+
+    if ($coupon->expires_at && $now > $coupon->expires_at) {
+        return $this->errorResponse('Ce coupon a expiré le ' . $coupon->expires_at->format('d/m/Y'), 400);
+    }
+
+    if ($coupon->max_uses && $coupon->used_count >= $coupon->max_uses) {
+        return $this->errorResponse('Ce coupon a atteint sa limite d\'utilisation', 400);
+    }
+
+    if ($coupon->customer_id && $coupon->customer_id != $customerId) {
+        return $this->errorResponse('Ce coupon ne vous appartient pas', 400);
+    }
+
+    if ($request->order_amount && $coupon->min_order_amount && $request->order_amount < $coupon->min_order_amount) {
+        $needed = $coupon->min_order_amount - $request->order_amount;
+        return $this->errorResponse("Montant minimum de commande non atteint. Ajoutez encore $needed MAD pour utiliser ce coupon.", 400);
+    }
+
+    // Check if customer has already used this coupon
+    if ($customerId) {
+        $pivotRecord = $coupon->customers()
+            ->where('customer_id', $customerId)
+            ->first();
+            
+        if ($pivotRecord && $pivotRecord->pivot->is_used) {
+            return $this->errorResponse('Vous avez déjà utilisé ce coupon', 400);
+        }
+    }
+
+    $discount = $coupon->calculateDiscount($request->order_amount);
+
+    return $this->successResponse([
+        'coupon' => $coupon,
+        'discount' => $discount,
+        'new_total' => $request->order_amount - $discount
+    ]);
+}    // ==================== CONTACT METHOD ====================
 
     public function contact(Request $request)
     {

@@ -1,5 +1,6 @@
 <?php
 // database/seeders/PartnerSeeder.php
+
 namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
@@ -9,6 +10,8 @@ class PartnerSeeder extends Seeder
 {
     public function run()
     {
+        // Clear existing partners
+     
         $partners = [
             ['name' => 'Bioelab', 'image' => 'https://www.teclab.ma/storage/products/partenaires/bioelab.png', 'url' => null, 'order' => 1],
             ['name' => 'Carestainer', 'image' => 'https://www.teclab.ma/storage/products/partenaires/carestainer.png', 'url' => null, 'order' => 2],
@@ -25,9 +28,16 @@ class PartnerSeeder extends Seeder
         ];
 
         foreach ($partners as $partner) {
-            DB::table('partners')->insert($partner);
+            DB::table('partners')->insert([
+                'name' => $partner['name'],
+                'image' => $partner['image'],
+                'url' => $partner['url'],
+                'order' => $partner['order'],
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
         }
 
-        $this->command->info('Partners seeded successfully!');
+        $this->command->info('✅ Partners seeded successfully!');
     }
 }
