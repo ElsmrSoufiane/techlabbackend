@@ -11,27 +11,30 @@ class CategorySeeder extends Seeder
 {
     public function run(): void
     {
+        $this->command->info('Seeding categories...');
+        
    
-
         $categories = [
-            ['name' => 'Microscopes'],
-            ['name' => 'Centrifugeuses'],
-            ['name' => 'Balances'],
-            ['name' => 'Étuves'],
-            ['name' => 'Instrumentation'],
-            ['name' => 'Réactifs'],
-            ['name' => 'Verre'],
-            ['name' => 'Consommables'],
+            ['name' => 'TUBES DE PRELEVEMENT', 'description' => 'Tubes sous vide et accessoires pour prélèvement sanguin'],
+            ['name' => 'AIGUILLES ET ACCESSOIRES', 'description' => 'Aiguilles de prélèvement et accessoires associés'],
+            ['name' => 'CONSOMMABLES DE LABORATOIRE', 'description' => 'Consommables pour laboratoire: boîtes de Pétri, flacons, écouvillons, etc.'],
+            ['name' => 'REACTIFS DE LABORATOIRE', 'description' => 'Réactifs pour analyses hématologiques, biochimie, etc.'],
+            ['name' => 'ANALYSEURS DE LABORATOIRE', 'description' => 'Analyseurs de biochimie, hématologie, coagulation, etc.'],
+            ['name' => 'EQUIPEMENTS DE LABORATOIRE', 'description' => 'Équipements et instruments de laboratoire'],
         ];
 
-        foreach ($categories as $category) {
+        foreach ($categories as $categoryData) {
             Category::create([
-                'name' => $category['name'],
-                'slug' => Str::slug($category['name']),
-                // 'description' is removed
+                'name' => $categoryData['name'],
+                'slug' => Str::slug($categoryData['name']),
+                'description' => $categoryData['description'],
             ]);
+            
+            $this->command->info("Created category: {$categoryData['name']}");
         }
 
-        $this->command->info('Categories seeded successfully!');
+        $this->command->info('=====================================');
+        $this->command->info('✅ Categories seeded successfully!');
+        $this->command->info('=====================================');
     }
 }
