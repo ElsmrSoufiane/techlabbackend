@@ -5,10 +5,67 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Ecom;
 use App\Http\Controllers\TelegramBotController;
 use App\Http\Controllers\EmailNotificationController;
+use App\Http\Controllers\AdminController;
+
+// Admin routes (protected by auth:sanctum and admin middleware)
 
 Route::prefix('v1')->group(function () {
     $controller = Ecom::class;
-
+Route::middleware('auth:sanctum')->prefix('admin')->group(function () {
+    
+    // Dashboard
+    Route::get('/stats', [AdminController::class, 'getStats']);
+    
+    // ==================== ORDER MANAGEMENT ====================
+    Route::prefix('orders')->group(function () {
+        Route::get('/', [AdminController::class, 'getOrders']);
+        Route::get('/{id}', [AdminController::class, 'getOrder']);
+        Route::put('/{id}/status', [AdminController::class, 'updateOrderStatus']);
+        Route::delete('/{id}', [AdminController::class, 'deleteOrder']);
+    });
+    
+    // ==================== PRODUCT MANAGEMENT ====================
+    Route::prefix('products')->group(function () {
+        Route::get('/', [AdminController::class, 'getProducts']);
+        Route::get('/low-stock', [AdminController::class, 'getLowStockProducts']);
+        Route::get('/{id}', [AdminController::class, 'getProduct']);
+        Route::post('/', [AdminController::class, 'createProduct']);
+        Route::put('/{id}', [AdminController::class, 'updateProduct']);
+        Route::delete('/{id}', [AdminController::class, 'deleteProduct']);
+        Route::post('/{id}/images', [AdminController::class, 'addProductImages']);
+        Route::delete('/{id}/images/{imageId}', [AdminController::class, 'deleteProductImage']);
+        Route::get('/export/csv', [AdminController::class, 'exportProducts']);
+    });
+    
+    // ==================== CATEGORY MANAGEMENT ====================
+    Route::prefix('categories')->group(function () {
+        Route::get('/', [AdminController::class, 'getCategories']);
+        Route::get('/{id}', [AdminController::class, 'getCategory']);
+        Route::post('/', [AdminController::class, 'createCategory']);
+        Route::put('/{id}', [AdminController::class, 'updateCategory']);
+        Route::delete('/{id}', [AdminController::class, 'deleteCategory']);
+    });
+    
+    // ==================== CUSTOMER MANAGEMENT ====================
+    Route::prefix('customers')->group(function () {
+        Route::get('/', [AdminController::class, 'getCustomers']);
+        Route::get('/{id}', [AdminController::class, 'getCustomer']);
+        Route::put('/{id}', [AdminController::class, 'updateCustomer']);
+        Route::delete('/{id}', [AdminController::class, 'deleteCustomer']);
+        Route::post('/{id}/verify-email', [AdminController::class, 'verifyCustomerEmail']);
+    });
+    
+    // ==================== COUPON MANAGEMENT ====================
+    Route::prefix('coupons')->group(function () {
+        Route::get('/', [AdminController::class, 'getCoupons']);
+        Route::get('/{id}', [AdminController::class, 'getCoupon']);
+        Route::get('/{id}/report', [AdminController::class, 'getCouponReport']);
+        Route::post('/', [AdminController::class, 'createCoupon']);
+        Route::put('/{id}', [AdminController::class, 'updateCoupon']);
+        Route::delete('/{id}', [AdminController::class, 'deleteCoupon']);
+        Route::post('/assign', [AdminController::class, 'assignCouponToCustomer']);
+    });
+});
     // ==================== PUBLIC ROUTES ====================
     
     // Auth routes
@@ -73,34 +130,7 @@ Route::prefix('v1')->group(function () {
 
     // ==================== ADMIN ROUTES ====================
     
-    Route::middleware('auth:sanctum')->prefix('admin')->group(function () use ($controller) {
-        // Order management
-        Route::get('/orders', [$controller, 'adminGetOrders']);
-        Route::put('/orders/{id}/status', [$controller, 'adminUpdateOrderStatus']);
-        Route::get('/stats', [$controller, 'adminGetStats']);
-        
-        // Product management
-        Route::post('/products', [$controller, 'adminCreateProduct']);
-        Route::put('/products/{id}', [$controller, 'adminUpdateProduct']);
-        Route::delete('/products/{id}', [$controller, 'adminDeleteProduct']);
-        
-        // Category management
-        Route::post('/categories', [$controller, 'adminCreateCategory']);
-        Route::put('/categories/{id}', [$controller, 'adminUpdateCategory']);
-        Route::delete('/categories/{id}', [$controller, 'adminDeleteCategory']);
-        
-        // Customer management
-        Route::get('/customers', [$controller, 'adminGetCustomers']);
-        
-        // Coupon management
-        Route::get('/coupons', [$controller, 'adminGetCoupons']);
-        Route::post('/coupons', [$controller, 'adminCreateCoupon']);
-        Route::put('/coupons/{id}', [$controller, 'adminUpdateCoupon']);
-        Route::delete('/coupons/{id}', [$controller, 'adminDeleteCoupon']);
-        Route::post('/coupons/assign', [$controller, 'adminAssignCouponToCustomer']);
-    });
-
-    // ==================== EMAIL NOTIFICATION ROUTES (ADMIN ONLY) ====================
+        // ==================== EMAIL NOTIFICATION ROUTES (ADMIN ONLY) ====================
     
     Route::middleware('auth:sanctum')->prefix('admin/emails')->group(function () use ($controller) {
         Route::post('/send/all', [EmailNotificationController::class, 'sendToAllCustomers']);
