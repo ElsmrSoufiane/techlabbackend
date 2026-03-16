@@ -188,66 +188,113 @@ class AdminController extends Controller
 
     // ==================== PRODUCT MANAGEMENT ====================
 
-    public function getProducts(Request $request)
-    {
-        $this->authorizeAdmin($request);
+   /**
+ * Get all products with images
+ */
+public function getProducts(Request $request)
+{
+    $this->authorizeAdmin($request);
 
-        try {
-            $query = Product::with(['category', 'images']);
+    try {
+        $query = Product::with(['category', 'images']);
 
-            if ($request->category_id) {
-                $query->where('category_id', $request->category_id);
-            }
+        // Search
+        if ($request->search) {
+            $query->where(function($q) use ($request) {
+                $q->where('name', 'like', '%' . $request->search . '%')
+                  ->orWhere('sku', 'like', '%' . $request->search . '%')
+                  ->orWhere('brand', 'like', '%' . $request->search . '%');
+            });
+        }
 
-            if ($request->search) {
-                $query->where(function($q) use ($request) {
-                    $q->where('name', 'like', '%' . $request->search . '%')
-                      ->orWhere('sku', 'like', '%' . $request->search . '%')
-                      ->orWhere('brand', 'like', '%' . $request->search . '%');
-                });
-            }
+        // Filter by category
+        if ($request->category_id) {
+            $query->where('category_id', $request->category_id);
+        }
 
-            if ($request->stock_status) {
-                if ($request->stock_status === 'low') {
-                    $query->where('stock', '<', 10);
-                } elseif ($request->stock_status === 'out') {
-                    $query->where('stock', 0);
-                } elseif ($request->stock_status === 'in') {
-                    $query->where('stock', '>', 0);
+        // Sort
+        $sortField = $request->sort_by ?? 'created_at';
+        $sortOrder = $request->sort_order ?? 'desc';
+        $query->orderBy($sortField, $sortOrder);
+
+        $perPage = $request->per_page ?? 20;
+        $products = $query->paginate($perPage);
+
+        // Transformer pour ajouter images_array et formater les données
+        $products->getCollection()->transform(function ($product) {
+            // S'assurer que les données de base existent
+            $productData = [
+                'id' => $product->id,
+                'name' => $product->name ?? '',
+                'sku' => $product->sku ?? '',
+                'price' => $product->price ?? 0,
+                'original_price' => $product->original_price ?? null,
+                'stock' => $product->stock ?? 0,
+                'brand' => $product->brand ?? '',
+                'category_id' => $product->category_id,
+                'category' => $product->category,
+                'featured' => $product->featured ?? false,
+                'badge' => $product->badge ?? '',
+                'description' => $product->description ?? '',
+                'created_at' => $product->created_at,
+                'updated_at' => $product->updated_at,
+            ];
+            
+            // Gestion des images - FORMAT STANDARDISÉ
+            $images = [];
+            
+            // Récupérer depuis la relation images
+            if ($product->images && $product->images->count() > 0) {
+                foreach ($product->images as $img) {
+                    $images[] = [
+                        'id' => $img->id,
+                        'image_path' => $img->image_path,
+                        'is_primary' => $img->is_primary,
+                        'sort_order' => $img->sort_order
+                    ];
                 }
             }
-
-            if ($request->featured !== null) {
-                $query->where('featured', $request->featured);
+            
+            // Ajouter l'image principale si elle existe
+            $mainImage = $product->image;
+            if (empty($images) && $mainImage) {
+                $images[] = [
+                    'id' => null,
+                    'image_path' => $mainImage,
+                    'is_primary' => true,
+                    'sort_order' => 0
+                ];
             }
-
-            if ($request->min_price) {
-                $query->where('price', '>=', $request->min_price);
-            }
-
-            if ($request->max_price) {
-                $query->where('price', '<=', $request->max_price);
-            }
-
-            $sortField = $request->sort_by ?? 'created_at';
-            $sortOrder = $request->sort_order ?? 'desc';
-            $query->orderBy($sortField, $sortOrder);
-
-            $perPage = $request->per_page ?? 20;
-            $products = $query->paginate($perPage);
-
-            $products->getCollection()->transform(function ($product) {
-                $product->images_array = $product->images->pluck('image_path')->toArray();
-                return $product;
+            
+            // Trier par sort_order
+            usort($images, function($a, $b) {
+                return ($a['sort_order'] ?? 0) - ($b['sort_order'] ?? 0);
             });
+            
+            // Ajouter les données formatées
+            $productData['images'] = $images;
+            $productData['image'] = !empty($images) ? $images[0]['image_path'] : ($product->image ?? 'https://via.placeholder.com/300');
+            $productData['images_array'] = array_column($images, 'image_path');
+            $productData['images_count'] = count($images);
+            
+            return (object) $productData;
+        });
 
-            return $this->successResponse($products);
-        } catch (\Exception $e) {
-            Log::error('Admin products error: ' . $e->getMessage());
-            return $this->errorResponse('Erreur lors du chargement des produits', 500);
-        }
+        return response()->json([
+            'success' => true,
+            'data' => $products
+        ]);
+        
+    } catch (\Exception $e) {
+        Log::error('Admin get products error: ' . $e->getMessage());
+        Log::error('Admin get products trace: ' . $e->getTraceAsString());
+        
+        return response()->json([
+            'success' => false,
+            'error' => 'Erreur lors du chargement des produits: ' . $e->getMessage()
+        ], 500);
     }
-
+}
     public function getLowStockProducts(Request $request)
     {
         $this->authorizeAdmin($request);
