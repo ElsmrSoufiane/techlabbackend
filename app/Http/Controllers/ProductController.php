@@ -240,14 +240,35 @@ public function getProductReviews(Request $request, $productId)
     /**
      * Get single product by slug
      */
-    public function show(Request $request, $slug)
-    {
+   /**
+ * Get single product by slug
+ */
+public function show(Request $request, $slug)
+{
+    try {
+        // 1. Chercher d'abord par slug (toujours une chaîne)
         $product = Product::with(['category', 'images'])
             ->where('slug', $slug)
-            ->orWhere('id', $slug)
-            ->firstOrFail();
+            ->first();
+        
+        // 2. Si pas trouvé par slug et que le paramètre est un nombre, chercher par ID
+        if (!$product && is_numeric($slug)) {
+            $product = Product::with(['category', 'images'])
+                ->where('id', $slug)
+                ->first();
+        }
+        
+        // 3. Si toujours pas trouvé, retourner erreur 404
+        if (!$product) {
+            Log::warning('Produit non trouvé', ['slug' => $slug]);
+            return response()->json([
+                'success' => false,
+                'error' => 'Produit non trouvé'
+            ], 404);
+        }
 
-        $product->images_array = $product->getAllImagesAttribute();
+        // Ajouter toutes les images au produit
+        $product->images_array = $product->images->pluck('image_path')->toArray();
         
         $user = $request->user();
         $product->original_price = $product->price;
@@ -256,7 +277,7 @@ public function getProductReviews(Request $request, $productId)
             $product->price = $user->calculateProPrice($product->price);
         }
 
-        // Get related products
+        // Récupérer les produits similaires
         $related = Product::with('images')
             ->where('category_id', $product->category_id)
             ->where('id', '!=', $product->id)
@@ -264,7 +285,7 @@ public function getProductReviews(Request $request, $productId)
             ->get();
 
         $related->transform(function ($item) use ($user) {
-            $item->images_array = $item->getAllImagesAttribute();
+            $item->images_array = $item->images->pluck('image_path')->toArray();
             if ($user && $user->isPro()) {
                 $item->original_price = $item->price;
                 $item->price = $user->calculateProPrice($item->price);
@@ -272,7 +293,7 @@ public function getProductReviews(Request $request, $productId)
             return $item;
         });
 
-        // Check if product is in user's favorites
+        // Vérifier si le produit est en favoris
         $isFavorite = false;
         if ($user) {
             $isFavorite = $user->favorites()
@@ -288,8 +309,15 @@ public function getProductReviews(Request $request, $productId)
                 'is_favorite' => $isFavorite
             ]
         ]);
-    }
 
+    } catch (\Exception $e) {
+        Log::error('Erreur lors du chargement du produit: ' . $e->getMessage());
+        return response()->json([
+            'success' => false,
+            'error' => 'Erreur lors du chargement du produit'
+        ], 500);
+    }
+}
     /**
      * Get products by IDs (for recently viewed)
      */
