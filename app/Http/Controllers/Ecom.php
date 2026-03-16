@@ -328,7 +328,7 @@ private function getProductPriceForUser($product, $user = null)
             $customer = Customer::where('verification_token', $token)->first();
 
             if (!$customer) {
-                return redirect('https://teclab.vercel.app/verify-email/error?message=Lien de vérification invalide ou expiré');
+                return redirect('http://localhost:3000/verify-email/error?message=Lien de vérification invalide ou expiré');
             }
 
             if (!$customer->email_verified_at) {
@@ -339,11 +339,11 @@ private function getProductPriceForUser($product, $user = null)
                 Log::info('Email verified successfully', ['customer_id' => $customer->id, 'email' => $customer->email]);
             }
 
-            return redirect('https://teclab.vercel.app/verify-email/success');
+            return redirect('http://localhost:3000/verify-email/success');
 
         } catch (\Exception $e) {
             Log::error('Email verification error: ' . $e->getMessage());
-            return redirect('https://teclab.vercel.app/verify-email/error?message=' . urlencode($e->getMessage()));
+            return redirect('http://localhost:3000/verify-email/error?message=' . urlencode($e->getMessage()));
         }
     }
 
@@ -432,19 +432,10 @@ private function getProductPriceForUser($product, $user = null)
 
    public function getProduct(Request $request, $slug)
 {
-    // Check if the slug is actually a numeric ID
-    if (is_numeric($slug)) {
-        // If it's numeric, search by ID first, then by slug
-        $product = Product::with(['category', 'images'])
-            ->where('id', $slug)
-            ->orWhere('slug', $slug)
-            ->firstOrFail();
-    } else {
-        // If it's a string slug, only search by slug
-        $product = Product::with(['category', 'images'])
-            ->where('slug', $slug)
-            ->firstOrFail();
-    }
+    $product = Product::with(['category', 'images'])
+        ->where('slug', $slug)
+        ->orWhere('id', $slug)
+        ->firstOrFail();
 
     $user = $this->authenticateFromToken($request);
     
@@ -486,36 +477,95 @@ private function getProductPriceForUser($product, $user = null)
         'is_favorite' => $isFavorite
     ]);
 }
+
 // Also update getProducts to include images
+/**
+ * Get all products with filters
+ */
 public function getProducts(Request $request)
 {
-    $query = Product::with(['category', 'images']);
-    
-    // ... your existing filters ...
-    
-    $perPage = $request->per_page ?? 12;
-    $products = $query->paginate($perPage);
-    
-    // Get authenticated user for pro pricing
-    $user = $this->authenticateFromToken($request);
-    
-    // Transform products
-    $products->getCollection()->transform(function ($product) use ($user) {
-        // Add images array
-        $product->images_array = $product->getAllImagesAttribute();
-        
-        // Apply pro discount if user is pro
-        if ($user && $user->isPro()) {
-            $product->original_price = $product->price;
-            $product->price = $user->calculateProPrice($product->price);
-            $product->pro_discount_applied = $user->pro_discount;
-        }
-        
-        return $product;
-    });
+    try {
+        $query = Product::with(['category', 'images']);
 
-    return $this->successResponse($products);
+        // Search by name, description, or SKU
+        if ($request->search) {
+            $query->where(function($q) use ($request) {
+                $q->where('name', 'like', '%' . $request->search . '%')
+                  ->orWhere('description', 'like', '%' . $request->search . '%')
+                  ->orWhere('sku', 'like', '%' . $request->search . '%');
+            });
+        }
+
+        // Filter by category
+        if ($request->category) {
+            $query->where('category_id', $request->category);
+        }
+
+        // Filter by brand (NEW)
+        if ($request->brand) {
+            $query->where('brand', 'like', '%' . $request->brand . '%');
+        }
+
+        // Filter by multiple brands (NEW)
+        if ($request->brands) {
+            $brands = explode(',', $request->brands);
+            $query->whereIn('brand', $brands);
+        }
+
+        // Price range
+        if ($request->min_price) {
+            $query->where('price', '>=', $request->min_price);
+        }
+        if ($request->max_price) {
+            $query->where('price', '<=', $request->max_price);
+        }
+
+        // Sorting
+        switch ($request->sort_by) {
+            case 'price-asc':
+                $query->orderBy('price', 'asc');
+                break;
+            case 'price-desc':
+                $query->orderBy('price', 'desc');
+                break;
+            case 'name-asc':
+                $query->orderBy('name', 'asc');
+                break;
+            case 'name-desc':
+                $query->orderBy('name', 'desc');
+                break;
+            default:
+                $query->orderBy('featured', 'desc')->orderBy('created_at', 'desc');
+        }
+
+        // Pagination
+        $perPage = $request->per_page ?? 12;
+        $products = $query->paginate($perPage);
+
+        // Get all unique brands for filter (NEW)
+        $allBrands = Product::distinct('brand')
+            ->whereNotNull('brand')
+            ->pluck('brand');
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'products' => $products,
+                'brands' => $allBrands
+            ]
+        ]);
+
+    } catch (\Exception $e) {
+        Log::error('Failed to fetch products: ' . $e->getMessage());
+        return response()->json([
+            'success' => false,
+            'error' => 'Erreur lors du chargement des produits'
+        ], 500);
+    }
 }
+
+
+
     public function getFeaturedProducts()
     {
         $products = Product::where('featured', true)
@@ -532,12 +582,31 @@ public function getProducts(Request $request)
         return $this->successResponse($categories);
     }
 
-    public function getBrands()
-    {
-        $brands = Product::distinct('brand')->whereNotNull('brand')->pluck('brand');
-        return $this->successResponse($brands);
-    }
+    /**
+ * Get all distinct brands
+ */
+public function getBrands(Request $request)
+{
+    try {
+        $brands = Product::distinct('brand')
+            ->whereNotNull('brand')
+            ->where('brand', '!=', '')
+            ->orderBy('brand')
+            ->pluck('brand');
 
+        return response()->json([
+            'success' => true,
+            'data' => $brands
+        ]);
+
+    } catch (\Exception $e) {
+        Log::error('Failed to fetch brands: ' . $e->getMessage());
+        return response()->json([
+            'success' => false,
+            'error' => 'Erreur lors du chargement des marques'
+        ], 500);
+    }
+}
     // ==================== CART METHODS ====================
 
     /**
@@ -1510,7 +1579,77 @@ public function cancelOrder(Request $request, $id)
         'new_total' => $request->order_amount - $discount
     ]);
 }    // ==================== CONTACT METHOD ====================
-
+/**
+ * Get product reviews
+ */
+/**
+ * Get product reviews - DEBUG VERSION
+ */
+/**
+ * Get product reviews
+ */
+/**
+ * Get product reviews - Version simplifiée
+ */
+public function getProductReviews(Request $request, $productId)
+{
+    try {
+        // Récupérer tous les avis approuvés
+        $reviews = DB::table('product_reviews')
+            ->join('customers', 'product_reviews.customer_id', '=', 'customers.id')
+            ->where('product_reviews.product_id', $productId)
+            ->where('product_reviews.is_approved', 1)
+            ->orderBy('product_reviews.created_at', 'desc')
+            ->select(
+                'product_reviews.*',
+                'customers.name as customer_name'
+            )
+            ->get();
+        
+        // Formater les avis
+        $formattedReviews = [];
+        foreach ($reviews as $review) {
+            $formattedReviews[] = [
+                'id' => $review->id,
+                'rating' => (int) $review->rating,
+                'title' => $review->title,
+                'review' => $review->review,
+                'created_at' => $review->created_at,
+                'customer' => [
+                    'name' => $review->customer_name
+                ]
+            ];
+        }
+        
+        // Calculer les statistiques
+        $total = count($reviews);
+        $average = $total > 0 ? $reviews->avg('rating') : 0;
+        
+        $distribution = [0,0,0,0,0];
+        foreach ($reviews as $review) {
+            $distribution[5 - $review->rating]++;
+        }
+        
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'data' => $formattedReviews,
+                'total' => $total,
+                'stats' => [
+                    'total' => $total,
+                    'average' => round($average, 1),
+                    'distribution' => $distribution
+                ]
+            ]
+        ]);
+        
+    } catch (\Exception $e) {
+        return response()->json([
+            'success' => false,
+            'error' => 'Erreur: ' . $e->getMessage()
+        ], 500);
+    }
+}
     public function contact(Request $request)
     {
         $validator = validator($request->all(), [
