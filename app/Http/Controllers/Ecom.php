@@ -430,54 +430,85 @@ private function getProductPriceForUser($product, $user = null)
 
     // ==================== PRODUCT METHODS ====================
 
-   public function getProduct(Request $request, $slug)
+  /**
+ * Get single product by slug
+ */
+public function getProduct(Request $request, $slug)
 {
-    $product = Product::with(['category', 'images'])
-        ->where('slug', $slug)
-        ->orWhere('id', $slug)
-        ->firstOrFail();
+    try {
+        // 1. Chercher d'abord par slug (toujours une chaîne)
+        $product = Product::with(['category', 'images'])
+            ->where('slug', $slug)
+            ->first();
+        
+        // 2. Si pas trouvé par slug et que le paramètre est un nombre, chercher par ID
+        if (!$product && is_numeric($slug)) {
+            $product = Product::with(['category', 'images'])
+                ->where('id', $slug)
+                ->first();
+        }
+        
+        // 3. Si toujours pas trouvé, retourner erreur 404
+        if (!$product) {
+            Log::warning('Produit non trouvé', ['slug' => $slug]);
+            return response()->json([
+                'success' => false,
+                'error' => 'Produit non trouvé'
+            ], 404);
+        }
 
-    $user = $this->authenticateFromToken($request);
-    
-    // Use the accessor to get all images
-    $product->images_array = $product->getAllImagesAttribute();
-    
-    // Store original price and apply pro discount
-    $product->original_price = $product->price;
-    if ($user && $user->isPro()) {
-        $product->price = $user->calculateProPrice($product->price);
-        $product->pro_discount_applied = $user->pro_discount;
-    }
+        // Ajouter toutes les images au produit
+        $product->images_array = $product->images->pluck('image_path')->toArray();
+        
+        // Appliquer le prix PRO si nécessaire
+        $user = $this->authenticateFromToken($request);
+        $product->original_price = $product->price;
+        
+        if ($user && $user->isPro()) {
+            $product->price = $user->calculateProPrice($product->price);
+        }
 
-    $related = Product::with('images')
-        ->where('category_id', $product->category_id)
-        ->where('id', '!=', $product->id)
-        ->limit(4)
-        ->get();
+        // Récupérer les produits similaires
+        $related = Product::with('images')
+            ->where('category_id', $product->category_id)
+            ->where('id', '!=', $product->id)
+            ->limit(4)
+            ->get();
 
-    // Apply pro discount to related products
-    if ($user && $user->isPro()) {
         $related->transform(function ($item) use ($user) {
-            $item->original_price = $item->price;
-            $item->price = $user->calculateProPrice($item->price);
+            $item->images_array = $item->images->pluck('image_path')->toArray();
+            if ($user && $user->isPro()) {
+                $item->original_price = $item->price;
+                $item->price = $user->calculateProPrice($item->price);
+            }
             return $item;
         });
-    }
 
-    $isFavorite = false;
-    if ($user) {
-        $isFavorite = $user->favorites()
-            ->where('product_id', $product->id)
-            ->exists();
-    }
+        // Vérifier si le produit est en favoris
+        $isFavorite = false;
+        if ($user) {
+            $isFavorite = $user->favorites()
+                ->where('product_id', $product->id)
+                ->exists();
+        }
 
-    return $this->successResponse([
-        'product' => $product,
-        'related' => $related,
-        'is_favorite' => $isFavorite
-    ]);
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'product' => $product,
+                'related' => $related,
+                'is_favorite' => $isFavorite
+            ]
+        ]);
+
+    } catch (\Exception $e) {
+        Log::error('Erreur lors du chargement du produit: ' . $e->getMessage());
+        return response()->json([
+            'success' => false,
+            'error' => 'Erreur lors du chargement du produit'
+        ], 500);
+    }
 }
-
 // Also update getProducts to include images
 /**
  * Get all products with filters
