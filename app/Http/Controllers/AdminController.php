@@ -218,19 +218,23 @@ public function getProducts(Request $request)
 
         $perPage = $request->per_page ?? 20;
         
-        // PAGINATION - Très important !
+        // PAGINATION - Version simplifiée et fiable
         $products = $query->paginate($perPage);
-
-        // Vérification - Les produits changent-ils par page ?
-        \Log::info('Page ' . $products->currentPage() . ' - IDs: ' . $products->pluck('id')->implode(','));
+        
+        // LOGS DE DÉBOGAGE CRITIQUES
+        \Log::info('========== DÉBOGAGE PAGINATION ==========');
+        \Log::info('Page demandée: ' . $request->page);
+        \Log::info('Total produits dans DB: ' . $products->total());
+        \Log::info('Produits sur cette page: ' . $products->count());
+        \Log::info('IDs sur cette page: ' . $products->pluck('id')->implode(','));
+        \Log::info('Page actuelle: ' . $products->currentPage());
+        \Log::info('Dernière page: ' . $products->lastPage());
+        \Log::info('========================================');
 
         // Transformer sans casser la pagination
         $products->getCollection()->transform(function ($product) {
-            // Construire les données sans perdre les propriétés
             $product->images_array = $product->images->pluck('image_path')->toArray();
             $product->images_count = $product->images->count();
-            
-            // Ajouter d'autres propriétés si nécessaire
             return $product;
         });
 
@@ -240,13 +244,13 @@ public function getProducts(Request $request)
         ]);
         
     } catch (\Exception $e) {
-        Log::error('Admin get products error: ' . $e->getMessage());
+        \Log::error('Admin get products error: ' . $e->getMessage());
         return response()->json([
             'success' => false,
             'error' => 'Erreur lors du chargement des produits'
         ], 500);
     }
-}  
+}
     
     public function getLowStockProducts(Request $request)
     {
