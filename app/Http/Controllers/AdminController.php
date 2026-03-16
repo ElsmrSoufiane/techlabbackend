@@ -52,9 +52,6 @@ class AdminController extends Controller
 
     // ==================== DASHBOARD STATS ====================
 
-    /**
-     * Get dashboard statistics
-     */
     public function getStats(Request $request)
     {
         $this->authorizeAdmin($request);
@@ -83,9 +80,6 @@ class AdminController extends Controller
 
     // ==================== ORDER MANAGEMENT ====================
 
-    /**
-     * Get all orders with filters
-     */
     public function getOrders(Request $request)
     {
         $this->authorizeAdmin($request);
@@ -93,7 +87,6 @@ class AdminController extends Controller
         try {
             $query = Order::with(['customer', 'items', 'coupon']);
 
-            // Apply filters
             if ($request->status) {
                 $query->where('status', $request->status);
             }
@@ -116,7 +109,6 @@ class AdminController extends Controller
                 });
             }
 
-            // Sort
             $sortField = $request->sort_by ?? 'created_at';
             $sortOrder = $request->sort_order ?? 'desc';
             $query->orderBy($sortField, $sortOrder);
@@ -131,9 +123,6 @@ class AdminController extends Controller
         }
     }
 
-    /**
-     * Get single order details
-     */
     public function getOrder(Request $request, $id)
     {
         $this->authorizeAdmin($request);
@@ -149,9 +138,6 @@ class AdminController extends Controller
         }
     }
 
-    /**
-     * Update order status
-     */
     public function updateOrderStatus(Request $request, $id)
     {
         $this->authorizeAdmin($request);
@@ -166,20 +152,8 @@ class AdminController extends Controller
 
         try {
             $order = Order::findOrFail($id);
-            $oldStatus = $order->status;
             $order->status = $request->status;
             $order->save();
-
-            // Log status change
-            Log::info('Order status updated', [
-                'order_id' => $order->id,
-                'old_status' => $oldStatus,
-                'new_status' => $request->status,
-                'admin_id' => $request->user()->id
-            ]);
-
-            // Send notification to customer (optional)
-            // $this->sendOrderStatusNotification($order);
 
             return $this->successResponse([
                 'message' => 'Statut mis à jour avec succès',
@@ -191,9 +165,6 @@ class AdminController extends Controller
         }
     }
 
-    /**
-     * Delete order (soft delete or permanent)
-     */
     public function deleteOrder(Request $request, $id)
     {
         $this->authorizeAdmin($request);
@@ -201,12 +172,10 @@ class AdminController extends Controller
         try {
             $order = Order::findOrFail($id);
             
-            // Check if order can be deleted
             if (!in_array($order->status, ['annulée', 'livré'])) {
                 return $this->errorResponse('Seules les commandes annulées ou livrées peuvent être supprimées', 400);
             }
 
-            // Delete order items first
             $order->items()->delete();
             $order->delete();
 
@@ -219,9 +188,6 @@ class AdminController extends Controller
 
     // ==================== PRODUCT MANAGEMENT ====================
 
-    /**
-     * Get all products with filters
-     */
     public function getProducts(Request $request)
     {
         $this->authorizeAdmin($request);
@@ -229,7 +195,6 @@ class AdminController extends Controller
         try {
             $query = Product::with(['category', 'images']);
 
-            // Apply filters
             if ($request->category_id) {
                 $query->where('category_id', $request->category_id);
             }
@@ -264,7 +229,6 @@ class AdminController extends Controller
                 $query->where('price', '<=', $request->max_price);
             }
 
-            // Sort
             $sortField = $request->sort_by ?? 'created_at';
             $sortOrder = $request->sort_order ?? 'desc';
             $query->orderBy($sortField, $sortOrder);
@@ -272,9 +236,8 @@ class AdminController extends Controller
             $perPage = $request->per_page ?? 20;
             $products = $query->paginate($perPage);
 
-            // Add images array to each product
             $products->getCollection()->transform(function ($product) {
-                $product->images_array = $product->getAllImagesAttribute();
+                $product->images_array = $product->images->pluck('image_path')->toArray();
                 return $product;
             });
 
@@ -285,9 +248,6 @@ class AdminController extends Controller
         }
     }
 
-    /**
-     * Get low stock products
-     */
     public function getLowStockProducts(Request $request)
     {
         $this->authorizeAdmin($request);
@@ -305,16 +265,13 @@ class AdminController extends Controller
         }
     }
 
-    /**
-     * Get single product
-     */
     public function getProduct(Request $request, $id)
     {
         $this->authorizeAdmin($request);
 
         try {
             $product = Product::with(['category', 'images'])->findOrFail($id);
-            $product->images_array = $product->getAllImagesAttribute();
+            $product->images_array = $product->images->pluck('image_path')->toArray();
 
             return $this->successResponse($product);
         } catch (\Exception $e) {
@@ -323,9 +280,6 @@ class AdminController extends Controller
         }
     }
 
-    /**
-     * Create new product
-     */
     public function createProduct(Request $request)
     {
         $this->authorizeAdmin($request);
@@ -335,12 +289,11 @@ class AdminController extends Controller
             'sku' => 'required|string|unique:products',
             'price' => 'required|numeric|min:0',
             'category_id' => 'required|exists:categories,id',
-            'brand' => 'required|string|max:255',
+            'brand' => 'nullable|string|max:255',
             'image' => 'nullable|string',
             'stock' => 'required|integer|min:0',
             'description' => 'nullable|string',
             'features' => 'nullable|array',
-            'attributes' => 'nullable|array',
             'badge' => 'nullable|string',
             'featured' => 'boolean',
             'images' => 'nullable|array',
@@ -354,7 +307,15 @@ class AdminController extends Controller
         try {
             DB::beginTransaction();
 
-            // Create product
+            // Déterminer l'image principale
+            $mainImage = $request->image;
+            if (!$mainImage && $request->has('images') && count($request->images) > 0) {
+                $mainImage = $request->images[0];
+            }
+            if (!$mainImage) {
+                $mainImage = 'https://via.placeholder.com/300';
+            }
+
             $product = Product::create([
                 'name' => $request->name,
                 'slug' => Str::slug($request->name),
@@ -363,16 +324,15 @@ class AdminController extends Controller
                 'original_price' => $request->original_price ?? $request->price,
                 'category_id' => $request->category_id,
                 'brand' => $request->brand,
-                'image' => $request->image ?? 'https://via.placeholder.com/300',
+                'image' => $mainImage,
                 'description' => $request->description,
                 'features' => $request->features,
-                'attributes' => $request->attributes,
                 'stock' => $request->stock,
                 'badge' => $request->badge,
                 'featured' => $request->featured ?? false,
             ]);
 
-            // Create additional images if provided
+            // Ajouter les images multiples
             if ($request->has('images') && is_array($request->images)) {
                 foreach ($request->images as $index => $imagePath) {
                     ProductImage::create([
@@ -390,16 +350,14 @@ class AdminController extends Controller
                 'message' => 'Produit créé avec succès',
                 'product' => $product->load('category', 'images')
             ], 201);
+
         } catch (\Exception $e) {
             DB::rollBack();
             Log::error('Admin create product error: ' . $e->getMessage());
-            return $this->errorResponse('Erreur lors de la création', 500);
+            return $this->errorResponse('Erreur lors de la création: ' . $e->getMessage(), 500);
         }
     }
 
-    /**
-     * Update product
-     */
     public function updateProduct(Request $request, $id)
     {
         $this->authorizeAdmin($request);
@@ -411,14 +369,15 @@ class AdminController extends Controller
             'sku' => 'sometimes|string|unique:products,sku,' . $id,
             'price' => 'sometimes|numeric|min:0',
             'category_id' => 'sometimes|exists:categories,id',
-            'brand' => 'sometimes|string|max:255',
+            'brand' => 'nullable|string|max:255',
             'image' => 'nullable|string',
             'stock' => 'sometimes|integer|min:0',
             'description' => 'nullable|string',
             'features' => 'nullable|array',
-            'attributes' => 'nullable|array',
             'badge' => 'nullable|string',
             'featured' => 'boolean',
+            'images' => 'nullable|array',
+            'images.*' => 'string'
         ]);
 
         if ($validator->fails()) {
@@ -430,9 +389,26 @@ class AdminController extends Controller
 
             $data = $request->all();
             
-            // Update slug if name changed
             if ($request->has('name') && $request->name !== $product->name) {
                 $data['slug'] = Str::slug($request->name);
+            }
+
+            // Mettre à jour l'image principale si des images sont fournies
+            if ($request->has('images') && is_array($request->images) && count($request->images) > 0) {
+                $data['image'] = $request->images[0];
+                
+                // Supprimer les anciennes images
+                $product->images()->delete();
+                
+                // Ajouter les nouvelles images
+                foreach ($request->images as $index => $imagePath) {
+                    ProductImage::create([
+                        'product_id' => $product->id,
+                        'image_path' => $imagePath,
+                        'sort_order' => $index,
+                        'is_primary' => $index === 0
+                    ]);
+                }
             }
 
             $product->update($data);
@@ -443,92 +419,47 @@ class AdminController extends Controller
                 'message' => 'Produit mis à jour avec succès',
                 'product' => $product->load('category', 'images')
             ]);
+
         } catch (\Exception $e) {
             DB::rollBack();
             Log::error('Admin update product error: ' . $e->getMessage());
-            return $this->errorResponse('Erreur lors de la mise à jour', 500);
+            return $this->errorResponse('Erreur lors de la mise à jour: ' . $e->getMessage(), 500);
         }
     }
 
-    /**
-     * Delete product
-     */
-  /**
- * Delete product
- */
-public function deleteProduct(Request $request, $id)
-{
-    $this->authorizeAdmin($request);
+    public function deleteProduct(Request $request, $id)
+    {
+        $this->authorizeAdmin($request);
 
-    try {
-        $product = Product::findOrFail($id);
-        
-        // Check if product is in any orders
-        $orderCount = OrderItem::where('product_id', $id)->count();
-        if ($orderCount > 0) {
-            return $this->errorResponse(
-                "Ce produit a $orderCount commande(s) associée(s). Impossible de le supprimer.",
-                400
-            );
+        try {
+            $product = Product::findOrFail($id);
+            
+            $orderCount = OrderItem::where('product_id', $id)->count();
+            if ($orderCount > 0) {
+                return $this->errorResponse(
+                    "Ce produit a $orderCount commande(s) associée(s). Impossible de le supprimer.",
+                    400
+                );
+            }
+
+            DB::beginTransaction();
+
+            DB::table('favorites')->where('product_id', $id)->delete();
+            CartItem::where('product_id', $id)->delete();
+            $product->images()->delete();
+            $product->delete();
+
+            DB::commit();
+
+            return $this->successResponse('Produit supprimé avec succès');
+            
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Admin delete product error: ' . $e->getMessage());
+            return $this->errorResponse('Erreur lors de la suppression', 500);
         }
-
-        DB::beginTransaction();
-
-        // Remove from favorites
-        DB::table('favorites')->where('product_id', $id)->delete();
-
-        // Remove from carts
-        CartItem::where('product_id', $id)->delete();
-
-        // Delete product images
-        $product->images()->delete();
-        
-        // Delete product
-        $product->delete();
-
-        DB::commit();
-
-        return $this->successResponse('Produit supprimé avec succès');
-        
-    } catch (\Exception $e) {
-        DB::rollBack();
-        Log::error('Admin delete product error: ' . $e->getMessage());
-        return $this->errorResponse('Erreur lors de la suppression', 500);
     }
-}
 
-/**
- * Delete category
- */
-public function deleteCategory(Request $request, $id)
-{
-    $this->authorizeAdmin($request);
-
-    try {
-        $category = Category::findOrFail($id);
-        
-        // Check if category has products
-        $productCount = $category->products()->count();
-        if ($productCount > 0) {
-            return $this->errorResponse(
-                "Cette catégorie contient $productCount produit(s). Impossible de la supprimer.",
-                400
-            );
-        }
-        
-        $category->delete();
-        
-        return $this->successResponse('Catégorie supprimée avec succès');
-        
-    } catch (\Exception $e) {
-        Log::error('Admin delete category error: ' . $e->getMessage());
-        return $this->errorResponse('Erreur lors de la suppression', 500);
-    }
-}
-
-    /**
-     * Add product images
-     */
     public function addProductImages(Request $request, $id)
     {
         $this->authorizeAdmin($request);
@@ -544,19 +475,24 @@ public function deleteCategory(Request $request, $id)
 
         try {
             $product = Product::findOrFail($id);
+            
+            $currentCount = $product->images()->count();
 
             foreach ($request->images as $index => $imagePath) {
                 ProductImage::create([
                     'product_id' => $product->id,
                     'image_path' => $imagePath,
-                    'sort_order' => $product->images()->count() + $index,
-                    'is_primary' => $product->images()->count() === 0 && $index === 0
+                    'sort_order' => $currentCount + $index,
+                    'is_primary' => $currentCount === 0 && $index === 0
                 ]);
             }
 
+            $product->load('images');
+            $product->images_array = $product->images->pluck('image_path')->toArray();
+
             return $this->successResponse([
                 'message' => 'Images ajoutées avec succès',
-                'product' => $product->load('images')
+                'product' => $product
             ]);
         } catch (\Exception $e) {
             Log::error('Admin add images error: ' . $e->getMessage());
@@ -564,21 +500,51 @@ public function deleteCategory(Request $request, $id)
         }
     }
 
-    /**
-     * Delete product image
-     */
     public function deleteProductImage(Request $request, $id, $imageId)
     {
         $this->authorizeAdmin($request);
 
         try {
+            $product = Product::findOrFail($id);
             $image = ProductImage::where('product_id', $id)
                 ->where('id', $imageId)
                 ->firstOrFail();
 
+            // Si c'était l'image principale, réassigner
+            if ($image->is_primary) {
+                $firstImage = $product->images()
+                    ->where('id', '!=', $imageId)
+                    ->orderBy('sort_order')
+                    ->first();
+                
+                if ($firstImage) {
+                    $firstImage->is_primary = true;
+                    $firstImage->save();
+                    
+                    $product->image = $firstImage->image_path;
+                    $product->save();
+                } else {
+                    $product->image = null;
+                    $product->save();
+                }
+            }
+
             $image->delete();
 
-            return $this->successResponse('Image supprimée avec succès');
+            // Réorganiser les sort_order
+            $remainingImages = $product->images()->orderBy('sort_order')->get();
+            foreach ($remainingImages as $index => $img) {
+                $img->sort_order = $index;
+                $img->save();
+            }
+
+            $product->load('images');
+            $product->images_array = $product->images->pluck('image_path')->toArray();
+
+            return $this->successResponse([
+                'message' => 'Image supprimée avec succès',
+                'product' => $product
+            ]);
         } catch (\Exception $e) {
             Log::error('Admin delete image error: ' . $e->getMessage());
             return $this->errorResponse('Erreur lors de la suppression', 500);
@@ -587,9 +553,6 @@ public function deleteCategory(Request $request, $id)
 
     // ==================== CATEGORY MANAGEMENT ====================
 
-    /**
-     * Get all categories
-     */
     public function getCategories(Request $request)
     {
         $this->authorizeAdmin($request);
@@ -606,9 +569,6 @@ public function deleteCategory(Request $request, $id)
         }
     }
 
-    /**
-     * Get single category
-     */
     public function getCategory(Request $request, $id)
     {
         $this->authorizeAdmin($request);
@@ -622,9 +582,6 @@ public function deleteCategory(Request $request, $id)
         }
     }
 
-    /**
-     * Create new category
-     */
     public function createCategory(Request $request)
     {
         $this->authorizeAdmin($request);
@@ -657,9 +614,6 @@ public function deleteCategory(Request $request, $id)
         }
     }
 
-    /**
-     * Update category
-     */
     public function updateCategory(Request $request, $id)
     {
         $this->authorizeAdmin($request);
@@ -679,7 +633,6 @@ public function deleteCategory(Request $request, $id)
         try {
             $data = $request->all();
             
-            // Update slug if name changed
             if ($request->has('name') && $request->name !== $category->name) {
                 $data['slug'] = Str::slug($request->name);
             }
@@ -696,15 +649,33 @@ public function deleteCategory(Request $request, $id)
         }
     }
 
-    /**
-     * Delete category
-     */
- 
+    public function deleteCategory(Request $request, $id)
+    {
+        $this->authorizeAdmin($request);
+
+        try {
+            $category = Category::findOrFail($id);
+            
+            $productCount = $category->products()->count();
+            if ($productCount > 0) {
+                return $this->errorResponse(
+                    "Cette catégorie contient $productCount produit(s). Impossible de la supprimer.",
+                    400
+                );
+            }
+            
+            $category->delete();
+            
+            return $this->successResponse('Catégorie supprimée avec succès');
+            
+        } catch (\Exception $e) {
+            Log::error('Admin delete category error: ' . $e->getMessage());
+            return $this->errorResponse('Erreur lors de la suppression', 500);
+        }
+    }
+
     // ==================== CUSTOMER MANAGEMENT ====================
 
-    /**
-     * Get all customers
-     */
     public function getCustomers(Request $request)
     {
         $this->authorizeAdmin($request);
@@ -712,7 +683,6 @@ public function deleteCategory(Request $request, $id)
         try {
             $query = Customer::withCount('orders');
 
-            // Apply filters
             if ($request->search) {
                 $query->where(function($q) use ($request) {
                     $q->where('name', 'like', '%' . $request->search . '%')
@@ -733,7 +703,6 @@ public function deleteCategory(Request $request, $id)
                 }
             }
 
-            // Sort
             $sortField = $request->sort_by ?? 'created_at';
             $sortOrder = $request->sort_order ?? 'desc';
             $query->orderBy($sortField, $sortOrder);
@@ -748,9 +717,6 @@ public function deleteCategory(Request $request, $id)
         }
     }
 
-    /**
-     * Get single customer with details
-     */
     public function getCustomer(Request $request, $id)
     {
         $this->authorizeAdmin($request);
@@ -760,10 +726,7 @@ public function deleteCategory(Request $request, $id)
                 $q->latest()->limit(10);
             }])->withCount('orders')->findOrFail($id);
 
-            // Get customer's favorites
             $customer->favorites_count = $customer->favorites()->count();
-
-            // Get customer's coupons
             $customer->coupons_count = $customer->coupons()->count();
 
             return $this->successResponse($customer);
@@ -773,9 +736,6 @@ public function deleteCategory(Request $request, $id)
         }
     }
 
-    /**
-     * Update customer
-     */
     public function updateCustomer(Request $request, $id)
     {
         $this->authorizeAdmin($request);
@@ -810,9 +770,6 @@ public function deleteCategory(Request $request, $id)
         }
     }
 
-    /**
-     * Delete customer
-     */
     public function deleteCustomer(Request $request, $id)
     {
         $this->authorizeAdmin($request);
@@ -820,7 +777,6 @@ public function deleteCategory(Request $request, $id)
         try {
             $customer = Customer::findOrFail($id);
             
-            // Check if customer has orders
             if ($customer->orders()->count() > 0) {
                 return $this->errorResponse('Impossible de supprimer un client qui a des commandes', 400);
             }
@@ -834,9 +790,6 @@ public function deleteCategory(Request $request, $id)
         }
     }
 
-    /**
-     * Verify customer email
-     */
     public function verifyCustomerEmail(Request $request, $id)
     {
         $this->authorizeAdmin($request);
@@ -864,9 +817,6 @@ public function deleteCategory(Request $request, $id)
 
     // ==================== COUPON MANAGEMENT ====================
 
-    /**
-     * Get all coupons
-     */
     public function getCoupons(Request $request)
     {
         $this->authorizeAdmin($request);
@@ -899,9 +849,6 @@ public function deleteCategory(Request $request, $id)
         }
     }
 
-    /**
-     * Get single coupon
-     */
     public function getCoupon(Request $request, $id)
     {
         $this->authorizeAdmin($request);
@@ -915,9 +862,6 @@ public function deleteCategory(Request $request, $id)
         }
     }
 
-    /**
-     * Create new coupon
-     */
     public function createCoupon(Request $request)
     {
         $this->authorizeAdmin($request);
@@ -944,7 +888,6 @@ public function deleteCategory(Request $request, $id)
         try {
             $coupon = Coupon::create($request->all());
 
-            // If assigned to a customer, create pivot record
             if ($request->customer_id) {
                 $coupon->customers()->attach($request->customer_id, [
                     'is_used' => false,
@@ -962,9 +905,6 @@ public function deleteCategory(Request $request, $id)
         }
     }
 
-    /**
-     * Update coupon
-     */
     public function updateCoupon(Request $request, $id)
     {
         $this->authorizeAdmin($request);
@@ -993,12 +933,9 @@ public function deleteCategory(Request $request, $id)
         try {
             $coupon->update($request->all());
 
-            // Update customer assignment if changed
             if ($request->has('customer_id')) {
-                // Remove old assignments
                 $coupon->customers()->detach();
                 
-                // Add new assignment if customer_id provided
                 if ($request->customer_id) {
                     $coupon->customers()->attach($request->customer_id, [
                         'is_used' => false,
@@ -1017,9 +954,6 @@ public function deleteCategory(Request $request, $id)
         }
     }
 
-    /**
-     * Delete coupon
-     */
     public function deleteCoupon(Request $request, $id)
     {
         $this->authorizeAdmin($request);
@@ -1027,14 +961,11 @@ public function deleteCategory(Request $request, $id)
         try {
             $coupon = Coupon::findOrFail($id);
             
-            // Check if coupon has been used in orders
             if ($coupon->orders()->count() > 0) {
-                // Soft delete or just deactivate
                 $coupon->update(['is_active' => false]);
                 return $this->successResponse('Coupon désactivé (utilisé dans des commandes)');
             }
 
-            // Delete pivot records first
             $coupon->customers()->detach();
             $coupon->delete();
 
@@ -1045,9 +976,6 @@ public function deleteCategory(Request $request, $id)
         }
     }
 
-    /**
-     * Assign coupon to customer
-     */
     public function assignCouponToCustomer(Request $request)
     {
         $this->authorizeAdmin($request);
@@ -1065,7 +993,6 @@ public function deleteCategory(Request $request, $id)
             $coupon = Coupon::findOrFail($request->coupon_id);
             $customer = Customer::findOrFail($request->customer_id);
 
-            // Check if already assigned
             if ($coupon->customers()->where('customer_id', $customer->id)->exists()) {
                 return $this->errorResponse('Coupon déjà assigné à ce client', 400);
             }
@@ -1075,7 +1002,6 @@ public function deleteCategory(Request $request, $id)
                 'used_at' => null
             ]);
 
-            // Update coupon to be assigned to this customer
             $coupon->customer_id = $customer->id;
             $coupon->is_public = false;
             $coupon->save();
@@ -1090,9 +1016,6 @@ public function deleteCategory(Request $request, $id)
         }
     }
 
-    /**
-     * Get coupon usage report
-     */
     public function getCouponReport(Request $request, $id)
     {
         $this->authorizeAdmin($request);
@@ -1117,11 +1040,8 @@ public function deleteCategory(Request $request, $id)
         }
     }
 
-    // ==================== PRODUCT IMPORT/EXPORT ====================
+    // ==================== EXPORT ====================
 
-    /**
-     * Export products to CSV
-     */
     public function exportProducts(Request $request)
     {
         $this->authorizeAdmin($request);
@@ -1145,7 +1065,6 @@ public function deleteCategory(Request $request, $id)
                 ];
             }
 
-            // Create CSV file
             $filename = 'products_export_' . date('Y-m-d') . '.csv';
             $handle = fopen('php://temp', 'w');
             
