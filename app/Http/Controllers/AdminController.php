@@ -198,7 +198,7 @@ public function getProducts(Request $request)
     try {
         $query = Product::with(['category', 'images']);
 
-        // Search
+        // Filtres
         if ($request->search) {
             $query->where(function($q) use ($request) {
                 $q->where('name', 'like', '%' . $request->search . '%')
@@ -207,77 +207,31 @@ public function getProducts(Request $request)
             });
         }
 
-        // Filter by category
         if ($request->category_id) {
             $query->where('category_id', $request->category_id);
         }
 
-        // Sort
+        // Tri
         $sortField = $request->sort_by ?? 'created_at';
         $sortOrder = $request->sort_order ?? 'desc';
         $query->orderBy($sortField, $sortOrder);
 
         $perPage = $request->per_page ?? 20;
+        
+        // PAGINATION - Très important !
         $products = $query->paginate($perPage);
 
-        // Transformer pour ajouter images_array et formater les données
+        // Vérification - Les produits changent-ils par page ?
+        \Log::info('Page ' . $products->currentPage() . ' - IDs: ' . $products->pluck('id')->implode(','));
+
+        // Transformer sans casser la pagination
         $products->getCollection()->transform(function ($product) {
-            // S'assurer que les données de base existent
-            $productData = [
-                'id' => $product->id,
-                'name' => $product->name ?? '',
-                'sku' => $product->sku ?? '',
-                'price' => $product->price ?? 0,
-                'original_price' => $product->original_price ?? null,
-                'stock' => $product->stock ?? 0,
-                'brand' => $product->brand ?? '',
-                'category_id' => $product->category_id,
-                'category' => $product->category,
-                'featured' => $product->featured ?? false,
-                'badge' => $product->badge ?? '',
-                'description' => $product->description ?? '',
-                'created_at' => $product->created_at,
-                'updated_at' => $product->updated_at,
-            ];
+            // Construire les données sans perdre les propriétés
+            $product->images_array = $product->images->pluck('image_path')->toArray();
+            $product->images_count = $product->images->count();
             
-            // Gestion des images - FORMAT STANDARDISÉ
-            $images = [];
-            
-            // Récupérer depuis la relation images
-            if ($product->images && $product->images->count() > 0) {
-                foreach ($product->images as $img) {
-                    $images[] = [
-                        'id' => $img->id,
-                        'image_path' => $img->image_path,
-                        'is_primary' => $img->is_primary,
-                        'sort_order' => $img->sort_order
-                    ];
-                }
-            }
-            
-            // Ajouter l'image principale si elle existe
-            $mainImage = $product->image;
-            if (empty($images) && $mainImage) {
-                $images[] = [
-                    'id' => null,
-                    'image_path' => $mainImage,
-                    'is_primary' => true,
-                    'sort_order' => 0
-                ];
-            }
-            
-            // Trier par sort_order
-            usort($images, function($a, $b) {
-                return ($a['sort_order'] ?? 0) - ($b['sort_order'] ?? 0);
-            });
-            
-            // Ajouter les données formatées
-            $productData['images'] = $images;
-            $productData['image'] = !empty($images) ? $images[0]['image_path'] : ($product->image ?? 'https://via.placeholder.com/300');
-            $productData['images_array'] = array_column($images, 'image_path');
-            $productData['images_count'] = count($images);
-            
-            return (object) $productData;
+            // Ajouter d'autres propriétés si nécessaire
+            return $product;
         });
 
         return response()->json([
@@ -287,14 +241,13 @@ public function getProducts(Request $request)
         
     } catch (\Exception $e) {
         Log::error('Admin get products error: ' . $e->getMessage());
-        Log::error('Admin get products trace: ' . $e->getTraceAsString());
-        
         return response()->json([
             'success' => false,
-            'error' => 'Erreur lors du chargement des produits: ' . $e->getMessage()
+            'error' => 'Erreur lors du chargement des produits'
         ], 500);
     }
-}
+}  
+    
     public function getLowStockProducts(Request $request)
     {
         $this->authorizeAdmin($request);
