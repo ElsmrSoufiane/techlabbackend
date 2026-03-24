@@ -1168,7 +1168,33 @@ public function getBrands(Request $request)
     }
 
     // ==================== ORDER METHODS ====================
+/**
+ * Get a single order by ID
+ */
+public function getOrder(Request $request, $id)
+{
+    $user = $this->authenticateFromToken($request);
+    if (!$user) {
+        return $this->errorResponse('Authentification requise', 401);
+    }
 
+    try {
+        $order = Order::with(['items', 'coupon', 'customer'])
+            ->where('id', $id)
+            ->where('customer_id', $user->id)
+            ->first();
+
+        if (!$order) {
+            return $this->errorResponse('Commande non trouvée', 404);
+        }
+
+        return $this->successResponse($order);
+
+    } catch (\Exception $e) {
+        Log::error('Error fetching order: ' . $e->getMessage());
+        return $this->errorResponse('Erreur lors du chargement de la commande', 500);
+    }
+}
     public function getOrders(Request $request)
     {
         $user = $this->authenticateFromToken($request);
