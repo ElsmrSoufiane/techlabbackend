@@ -328,7 +328,7 @@ private function getProductPriceForUser($product, $user = null)
             $customer = Customer::where('verification_token', $token)->first();
 
             if (!$customer) {
-                return redirect('http://localhost:3000/verify-email/error?message=Lien de vérification invalide ou expiré');
+                return redirect('https://teclab.vercel.app/verify-email/error?message=Lien de vérification invalide ou expiré');
             }
 
             if (!$customer->email_verified_at) {
@@ -339,11 +339,11 @@ private function getProductPriceForUser($product, $user = null)
                 Log::info('Email verified successfully', ['customer_id' => $customer->id, 'email' => $customer->email]);
             }
 
-            return redirect('http://localhost:3000/verify-email/success');
+            return redirect('https://teclab.vercel.app/verify-email/success');
 
         } catch (\Exception $e) {
             Log::error('Email verification error: ' . $e->getMessage());
-            return redirect('http://localhost:3000/verify-email/error?message=' . urlencode($e->getMessage()));
+            return redirect('https://teclab.vercel.app/verify-email/error?message=' . urlencode($e->getMessage()));
         }
     }
 
