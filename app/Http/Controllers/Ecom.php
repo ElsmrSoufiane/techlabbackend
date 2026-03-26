@@ -430,12 +430,18 @@ private function getProductPriceForUser($product, $user = null)
 
     // ==================== PRODUCT METHODS ====================
 
-   public function getProduct(Request $request, $slug)
+  public function getProduct(Request $request, $slug)
 {
-    $product = Product::with(['category', 'images'])
-        ->where('slug', $slug)
-        ->orWhere('id', $slug)
-        ->firstOrFail();
+    $query = Product::with(['category', 'images']);
+    
+    // Check if slug is numeric (ID) or string
+    if (is_numeric($slug)) {
+        $query->where('id', $slug);
+    } else {
+        $query->where('slug', $slug);
+    }
+    
+    $product = $query->firstOrFail();
 
     $user = $this->authenticateFromToken($request);
     
